@@ -16,7 +16,11 @@ from .candidate_generator import BounceCandidateGenerator, RallyBounceDetector
 
 class BounceDetector:
     """
-    羽毛球落点检测器
+    羽毛球事件检测器
+    
+    检测两种事件:
+    - 落地点 (landing): 球落地后停止/消失
+    - 击球点 (hit): 球被球拍击中
     
     Phase 1: 仅使用规则方法
     Phase 2+: 加入 BounceNet 分类网络
@@ -25,20 +29,21 @@ class BounceDetector:
     def __init__(self,
                  # 运动学参数
                  fps: int = 30,
-                 # 候选生成参数
-                 speed_drop_ratio: float = 0.4,
-                 min_y_ratio: float = 0.35,
-                 landing_y_ratio: float = 0.6,
-                 direction_change_th: float = 120,
+                 # 落地点检测参数
+                 speed_drop_ratio: float = 0.3,
+                 min_speed_before_landing: float = 8.0,
+                 max_speed_after_landing: float = 5.0,
+                 # 击球点检测参数
+                 min_speed_at_hit: float = 5.0,
+                 vy_reversal_threshold: float = 3.0,
+                 # 通用参数
                  min_visible_before: int = 3,
-                 min_speed_before: float = 5.0,
                  merge_window: int = 3,
-                 detect_hit_points: bool = False,
                  # BounceNet 参数 (Phase 2)
                  bouncenet_ckpt: Optional[str] = None,
                  use_visual_features: bool = False):
         """
-        初始化落点检测器
+        初始化事件检测器
         """
         self.fps = fps
         self.img_size = (512, 288)  # 默认 TrackNet 输入尺寸
@@ -49,16 +54,13 @@ class BounceDetector:
         # 初始化候选生成器
         self.candidate_generator = BounceCandidateGenerator(
             speed_drop_ratio=speed_drop_ratio,
-            min_y_ratio=min_y_ratio,
-            landing_y_ratio=landing_y_ratio,
-            direction_change_th=direction_change_th,
+            min_speed_before_landing=min_speed_before_landing,
+            max_speed_after_landing=max_speed_after_landing,
+            min_speed_at_hit=min_speed_at_hit,
+            vy_reversal_threshold=vy_reversal_threshold,
             min_visible_before=min_visible_before,
-            min_speed_before=min_speed_before,
-            merge_window=merge_window,
-            detect_hit_points=detect_hit_points
+            merge_window=merge_window
         )
-        
-        self.detect_hit_points = detect_hit_points
         
         # Phase 2: BounceNet (待实现)
         self.bouncenet = None
@@ -76,21 +78,19 @@ class BounceDetector:
                y: np.ndarray,
                visibility: np.ndarray,
                frames: Optional[np.ndarray] = None,
-               img_height: Optional[int] = None,
-               only_landing: bool = True) -> List[Dict]:
+               img_height: Optional[int] = None) -> List[Dict]:
         """
-        检测落点
+        检测事件（落地点 + 击球点）
         
         Args:
             x: x 坐标序列
             y: y 坐标序列  
             visibility: 可见性序列
             frames: 视频帧数组 (Phase 2, 用于视觉特征)
-            img_height: 图像高度 (如果为 None, 使用默认值)
-            only_landing: 如果为 True，只返回落地点；否则也返回击球点
+            img_height: 图像高度 (保留兼容性)
         
         Returns:
-            bounces: 检测到的落点列表
+            events: 检测到的事件列表（包含落地点和击球点）
         """
         if img_height is None:
             img_height = self.img_size[1]
@@ -98,12 +98,11 @@ class BounceDetector:
         # Step 1: 计算运动学特征
         kinematics = self.kinematics_calculator.compute(x, y, visibility)
         
-        # Step 2: 生成候选落点
+        # Step 2: 生成候选事件
         candidates = self.candidate_generator.generate(
             x, y, visibility, 
             kinematics=kinematics,
-            img_height=img_height,
-            only_landing=only_landing
+            img_height=img_height
         )
         
         # Phase 1: 直接返回候选
@@ -189,13 +188,13 @@ def visualize_candidates(x: np.ndarray,
                          visibility: np.ndarray,
                          candidates: List[Dict],
                          save_path: Optional[str] = None,
-                         title: str = "Bounce Candidates"):
+                         title: str = "Event Detection"):
     """
-    可视化轨迹和候选落点
+    可视化轨迹和检测到的事件
     
     Args:
         x, y, visibility: 轨迹数据
-        candidates: 候选落点列表
+        candidates: 候选事件列表
         save_path: 保存路径 (如果为 None, 显示图像)
         title: 图表标题
     """
@@ -203,28 +202,43 @@ def visualize_candidates(x: np.ndarray,
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
+    # 事件类型颜色
+    event_colors = {
+        'landing': 'red',
+        'hit': 'blue',
+        'out_of_frame': 'gray'
+    }
+    event_markers = {
+        'landing': '*',
+        'hit': 'o',
+        'out_of_frame': 'x'
+    }
+    
     # 1. 轨迹图 (x-y)
     ax1 = axes[0, 0]
     visible_mask = visibility == 1
     ax1.scatter(x[visible_mask], y[visible_mask], c=np.arange(len(x))[visible_mask], 
                 cmap='viridis', s=10, alpha=0.6, label='Trajectory')
-    ax1.plot(x[visible_mask], y[visible_mask], 'b-', alpha=0.3, linewidth=0.5)
+    ax1.plot(x[visible_mask], y[visible_mask], 'g-', alpha=0.3, linewidth=0.5)
     
-    # 标记候选落点
-    colors = {'visibility_drop': 'red', 'speed_drop': 'orange', 
-              'y_velocity_reversal': 'purple', 'direction_change': 'green',
-              'trajectory_end': 'brown'}
+    # 标记事件
     for cand in candidates:
-        color = colors.get(cand['rule'], 'black')
-        ax1.scatter(cand['x'], cand['y'], c=color, s=200, marker='*', 
+        event_type = cand.get('event_type', 'unknown')
+        color = event_colors.get(event_type, 'black')
+        marker = event_markers.get(event_type, 's')
+        ax1.scatter(cand['x'], cand['y'], c=color, s=200, marker=marker, 
                    edgecolors='black', linewidths=1, zorder=5,
-                   label=f"{cand['rule']} (frame {cand['frame']})")
+                   label=f"{event_type}: frame {cand['frame']}")
     
     ax1.set_xlabel('X')
     ax1.set_ylabel('Y')
-    ax1.set_title('Trajectory with Bounce Candidates')
-    ax1.invert_yaxis()  # Y轴翻转，因为图像坐标系原点在左上角
-    ax1.legend(loc='upper right', fontsize=8)
+    ax1.set_title('Trajectory with Detected Events')
+    ax1.invert_yaxis()
+    
+    # 创建图例（避免重复）
+    handles, labels = ax1.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    ax1.legend(by_label.values(), by_label.keys(), loc='upper right', fontsize=7)
     ax1.grid(True, alpha=0.3)
     
     # 2. Y 坐标随时间变化
@@ -234,8 +248,9 @@ def visualize_candidates(x: np.ndarray,
     ax2.scatter(frames[~visible_mask], y[~visible_mask], c='gray', s=5, alpha=0.3, label='Invisible')
     
     for cand in candidates:
-        color = colors.get(cand['rule'], 'black')
-        ax2.axvline(x=cand['frame'], color=color, linestyle='--', alpha=0.7)
+        event_type = cand.get('event_type', 'unknown')
+        color = event_colors.get(event_type, 'black')
+        ax2.axvline(x=cand['frame'], color=color, linestyle='--', alpha=0.7, linewidth=1)
         ax2.scatter(cand['frame'], cand['y'], c=color, s=100, marker='*', zorder=5)
     
     ax2.set_xlabel('Frame')
@@ -254,26 +269,28 @@ def visualize_candidates(x: np.ndarray,
     ax3.fill_between(frames, 0, speed, alpha=0.3)
     
     for cand in candidates:
-        color = colors.get(cand['rule'], 'black')
-        ax3.axvline(x=cand['frame'], color=color, linestyle='--', alpha=0.7)
+        event_type = cand.get('event_type', 'unknown')
+        color = event_colors.get(event_type, 'black')
+        ax3.axvline(x=cand['frame'], color=color, linestyle='--', alpha=0.7, linewidth=1)
     
     ax3.set_xlabel('Frame')
     ax3.set_ylabel('Speed (pixels/frame)')
-    ax3.set_title('Speed over Time')
+    ax3.set_title('Speed over Time (red=landing, blue=hit, gray=out)')
     ax3.grid(True, alpha=0.3)
     
     # 4. Y 方向速度
     ax4 = axes[1, 1]
     v_y = kinematics['v_y']
     
-    ax4.plot(frames, v_y, 'r-', linewidth=1, label='V_y')
+    ax4.plot(frames, v_y, 'purple', linewidth=1, label='V_y')
     ax4.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
     ax4.fill_between(frames, 0, v_y, where=v_y > 0, alpha=0.3, color='red', label='Downward')
     ax4.fill_between(frames, 0, v_y, where=v_y < 0, alpha=0.3, color='blue', label='Upward')
     
     for cand in candidates:
-        color = colors.get(cand['rule'], 'black')
-        ax4.axvline(x=cand['frame'], color=color, linestyle='--', alpha=0.7)
+        event_type = cand.get('event_type', 'unknown')
+        color = event_colors.get(event_type, 'black')
+        ax4.axvline(x=cand['frame'], color=color, linestyle='--', alpha=0.7, linewidth=1)
     
     ax4.set_xlabel('Frame')
     ax4.set_ylabel('V_y (pixels/frame)')

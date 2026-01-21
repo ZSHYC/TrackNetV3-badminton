@@ -23,8 +23,7 @@ from bounce_detection import KinematicsCalculator, BounceCandidateGenerator
 from bounce_detection.detector import BounceDetector, visualize_candidates
 
 
-def test_single_csv(csv_path: str, visualize: bool = False, save_dir: str = None, 
-                    detect_hits: bool = False):
+def test_single_csv(csv_path: str, visualize: bool = False, save_dir: str = None):
     """测试单个 CSV 文件"""
     print(f"\n{'='*60}")
     print(f"Testing: {csv_path}")
@@ -43,38 +42,50 @@ def test_single_csv(csv_path: str, visualize: bool = False, save_dir: str = None
     
     # 创建检测器
     detector = BounceDetector(
-        speed_drop_ratio=0.4,
-        min_y_ratio=0.35,
-        landing_y_ratio=0.6,
-        min_visible_before=3,
-        min_speed_before=5.0,
-        detect_hit_points=detect_hits
+        speed_drop_ratio=0.3,
+        min_speed_before_landing=8.0,
+        max_speed_after_landing=5.0,
+        min_speed_at_hit=5.0,
+        vy_reversal_threshold=3.0,
+        min_visible_before=3
     )
     
-    # 检测候选落点
-    candidates = detector.detect(x, y, visibility, img_height=288, only_landing=not detect_hits)
+    # 检测事件
+    candidates = detector.detect(x, y, visibility, img_height=288)
     
     # 分类统计
     landing_candidates = [c for c in candidates if c.get('event_type') == 'landing']
     hit_candidates = [c for c in candidates if c.get('event_type') == 'hit']
+    out_candidates = [c for c in candidates if c.get('event_type') == 'out_of_frame']
     
-    print(f"\nDetected {len(landing_candidates)} landing candidate(s):")
+    print(f"\n=== Detected {len(landing_candidates)} LANDING candidate(s) ===")
     for i, cand in enumerate(landing_candidates):
         print(f"  [{i+1}] Frame {cand['frame']:4d} | "
               f"Position ({cand['x']:.0f}, {cand['y']:.0f}) | "
-              f"Rule: {cand['rule']:25s} | "
+              f"Rule: {cand['rule']:20s} | "
               f"Confidence: {cand['confidence']:.2f}")
         if 'features' in cand:
             feat_str = ', '.join([f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}" 
                                  for k, v in cand['features'].items()])
             print(f"       Features: {feat_str}")
     
-    if detect_hits and hit_candidates:
-        print(f"\nDetected {len(hit_candidates)} hit point candidate(s):")
-        for i, cand in enumerate(hit_candidates):
+    print(f"\n=== Detected {len(hit_candidates)} HIT candidate(s) ===")
+    for i, cand in enumerate(hit_candidates):
+        print(f"  [{i+1}] Frame {cand['frame']:4d} | "
+              f"Position ({cand['x']:.0f}, {cand['y']:.0f}) | "
+              f"Rule: {cand['rule']:20s} | "
+              f"Confidence: {cand['confidence']:.2f}")
+        if 'features' in cand:
+            feat_str = ', '.join([f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}" 
+                                 for k, v in cand['features'].items()])
+            print(f"       Features: {feat_str}")
+    
+    if out_candidates:
+        print(f"\n=== Detected {len(out_candidates)} OUT_OF_FRAME candidate(s) ===")
+        for i, cand in enumerate(out_candidates):
             print(f"  [{i+1}] Frame {cand['frame']:4d} | "
                   f"Position ({cand['x']:.0f}, {cand['y']:.0f}) | "
-                  f"Rule: {cand['rule']:25s} | "
+                  f"Rule: {cand['rule']:20s} | "
                   f"Confidence: {cand['confidence']:.2f}")
     
     # 轨迹分析
@@ -105,10 +116,14 @@ def test_single_csv(csv_path: str, visualize: bool = False, save_dir: str = None
 
 def test_match_directory(match_dir: str, visualize: bool = False, save_dir: str = None):
     """测试整个 match 目录"""
-    csv_dir = os.path.join(match_dir, 'csv')
-    if not os.path.exists(csv_dir):
-        # 尝试 corrected_csv 目录
-        csv_dir = os.path.join(match_dir, 'corrected_csv')
+    # 如果目录名已经是 csv 目录
+    if match_dir.endswith('csv') or match_dir.endswith('corrected_csv'):
+        csv_dir = match_dir
+    else:
+        csv_dir = os.path.join(match_dir, 'csv')
+        if not os.path.exists(csv_dir):
+            # 尝试 corrected_csv 目录
+            csv_dir = os.path.join(match_dir, 'corrected_csv')
     
     if not os.path.exists(csv_dir):
         print(f"Error: Cannot find csv directory in {match_dir}")
@@ -184,8 +199,6 @@ def main():
     parser.add_argument('--save_dir', type=str, default='bounce_analysis', 
                         help='Directory to save visualizations')
     parser.add_argument('--demo', action='store_true', help='Run kinematics demo')
-    parser.add_argument('--detect_hits', action='store_true', 
-                        help='Also detect hit points (not just landing)')
     args = parser.parse_args()
     
     if args.demo:
@@ -193,8 +206,7 @@ def main():
         return
     
     if args.csv:
-        test_single_csv(args.csv, visualize=args.visualize, save_dir=args.save_dir,
-                       detect_hits=args.detect_hits)
+        test_single_csv(args.csv, visualize=args.visualize, save_dir=args.save_dir)
     elif args.match_dir:
         test_match_directory(args.match_dir, visualize=args.visualize, save_dir=args.save_dir)
     else:
