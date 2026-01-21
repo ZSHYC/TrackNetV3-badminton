@@ -4,10 +4,6 @@ Bounce Candidate Generator for Badminton
 
 使用规则方法检测可能的落点位置，作为后续分类网络的输入。
 
-羽毛球落点特性:
-1. 落地后几乎不反弹（与网球不同）
-2. 落点表现为: 下落→停止/消失
-3. 落点一般在场地底部区域
 """
 
 import numpy as np
