@@ -30,8 +30,8 @@ class BounceCandidateGenerator:
                  min_speed_before_landing: float = 8.0,  # 落地前最小速度（过滤静止球）
                  max_speed_after_landing: float = 5.0,   # 落地后最大速度（接近静止）
                  # 击球点检测参数
-                 min_speed_at_hit: float = 5.0,          # 击球时最小速度
-                 vy_reversal_threshold: float = 3.0,     # v_y 反转阈值
+                 min_speed_at_hit: float = 3.0,          # 击球时最小速度
+                 vy_reversal_threshold: float = 1.0,     # v_y 反转阈值
                  # 通用参数
                  min_visible_before: int = 3,            # 事件前最少可见帧数
                  merge_window: int = 3):                 # 合并相邻候选的窗口大小
@@ -239,6 +239,64 @@ class BounceCandidateGenerator:
                                     'vx_before': float(vx_before),
                                     'vx_after': float(vx_after),
                                     'speed_after': float(speed_after)
+                                }
+                            })
+                            continue
+            
+            # 规则5: Y坐标局部极小值 (球到达最高点 = 击球后上升的顶点)
+            # 图像坐标系中 Y 向下，所以 Y 极小值 = 球的最高点
+            if t > 1 and t + 2 < n:
+                # 检查是否是局部极小值: y[t-1] > y[t] < y[t+1]
+                if (visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1):
+                    is_y_minimum = (y[t] < y[t-1] and y[t] < y[t+1])
+                    
+                    # 确保不是噪声（需要有一定的高度差）
+                    height_diff = min(y[t-1] - y[t], y[t+1] - y[t])
+                    
+                    if is_y_minimum and height_diff > 3:  # 至少3像素的高度差
+                        # 避免重复
+                        if not any(c['frame'] == t for c in candidates):
+                            candidates.append({
+                                'frame': t,
+                                'x': float(x[t]),
+                                'y': float(y[t]),
+                                'event_type': 'hit',
+                                'rule': 'y_local_min',
+                                'confidence': 0.70,
+                                'features': {
+                                    'y_before': float(y[t-1]),
+                                    'y_current': float(y[t]),
+                                    'y_after': float(y[t+1]),
+                                    'height_diff': float(height_diff)
+                                }
+                            })
+                            continue
+            
+            # 规则6: 速度局部极大值 (击球瞬间速度达到峰值)
+            if t > 1 and t + 2 < n:
+                # 检查是否是局部极大值: speed[t-1] < speed[t] > speed[t+1]
+                if (visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1):
+                    is_speed_maximum = (speed[t] > speed[t-1] and speed[t] > speed[t+1])
+                    
+                    # 确保速度足够高，不是噪声
+                    speed_threshold = 10.0  # 最小峰值速度阈值
+                    speed_diff = min(speed[t] - speed[t-1], speed[t] - speed[t+1])
+                    
+                    if is_speed_maximum and speed[t] > speed_threshold and speed_diff > 1:
+                        # 避免重复
+                        if not any(c['frame'] == t for c in candidates):
+                            candidates.append({
+                                'frame': t,
+                                'x': float(x[t]),
+                                'y': float(y[t]),
+                                'event_type': 'hit',
+                                'rule': 'speed_local_max',
+                                'confidence': 0.65,
+                                'features': {
+                                    'speed_before': float(speed[t-1]),
+                                    'speed_current': float(speed[t]),
+                                    'speed_after': float(speed[t+1]),
+                                    'speed_diff': float(speed_diff)
                                 }
                             })
                             continue
