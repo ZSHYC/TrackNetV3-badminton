@@ -253,7 +253,7 @@ class BounceCandidateGenerator:
                     # 确保不是噪声（需要有一定的高度差）
                     height_diff = min(y[t-1] - y[t], y[t+1] - y[t])
                     
-                    if is_y_minimum and height_diff > 3:  # 至少3像素的高度差
+                    if is_y_minimum and height_diff > 0:  # 至少3像素的高度差
                         # 避免重复
                         if not any(c['frame'] == t for c in candidates):
                             candidates.append({
@@ -282,7 +282,7 @@ class BounceCandidateGenerator:
                     speed_threshold = 10.0  # 最小峰值速度阈值
                     speed_diff = min(speed[t] - speed[t-1], speed[t] - speed[t+1])
                     
-                    if is_speed_maximum and speed[t] > speed_threshold and speed_diff > 1:
+                    if is_speed_maximum and speed[t] > speed_threshold and speed_diff > 0:
                         # 避免重复
                         if not any(c['frame'] == t for c in candidates):
                             candidates.append({
