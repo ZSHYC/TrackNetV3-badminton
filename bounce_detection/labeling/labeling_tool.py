@@ -1,34 +1,39 @@
 """
-半自动标注工具主类
 Semi-automatic Labeling Tool for Bounce Detection
 
-交互式界面，支持:
-- 视频帧浏览
-- Phase 1 候选预填充
-- 人工确认/修正/删除/添加事件
-- 保存标注结果
+Interactive UI supports:
+- Video frame browsing
+- Phase 1 candidate pre-fill
+- Manual confirm/edit/delete/add events
+- Save labels
+
+Optimized version - Clean UI + Complete keyboard shortcuts
 """
 
 import os
 import sys
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 from typing import Dict, List, Optional, Callable
 
-# 添加父目录到路径
+# Fix minus sign display
+matplotlib.rcParams['axes.unicode_minus'] = False
+
+# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from .data_manager import LabelingDataManager, find_matching_video
-from .visualizer import FrameVisualizer, TrajectoryPlot, InfoPanel, EventListPanel
+from .visualizer import FrameVisualizer, TrajectoryPlot, InfoPanel, EventListPanel, ShortcutPanel, THEME
 
 
 class LabelingTool:
     """
-    半自动标注工具
+    Semi-automatic Labeling Tool
     
-    使用方法:
-    1. 初始化: tool = LabelingTool(csv_path, video_path)
+    Usage:
+    1. Init: tool = LabelingTool(csv_path, video_path)
     2. 预填充: tool.prefill_from_detector()
     3. 启动: tool.run()
     4. 使用键盘快捷键进行标注
@@ -112,26 +117,35 @@ class LabelingTool:
         print(f"Pre-filled {len(candidates)} events from Phase 1 detector")
     
     def _setup_ui(self):
-        """设置 UI 布局"""
+        """设置 UI 布局 - 美观的现代化界面"""
+        # 设置深色主题
+        plt.style.use('dark_background')
+        
         # 创建图形
-        self.fig = plt.figure(figsize=(16, 10))
-        self.fig.canvas.manager.set_window_title('Bounce Detection Labeling Tool')
+        self.fig = plt.figure(figsize=(18, 11), facecolor=THEME['bg_dark'])
+        self.fig.canvas.manager.set_window_title('🏸 羽毛球落点检测标注工具')
         
-        # 布局: 2行3列
-        # [视频帧 (大)      ] [信息面板] [事件列表]
-        # [Y坐标图] [速度图 ] [按钮区域]
+        # 布局: 2行4列
+        # [视频帧 (大)      ] [信息面板] [事件列表] [快捷键]
+        # [Y坐标图] [速度图 ] [按钮区域            ]
         
-        gs = self.fig.add_gridspec(2, 3, height_ratios=[2, 1], 
-                                   width_ratios=[2, 1, 1],
-                                   hspace=0.3, wspace=0.3)
+        gs = self.fig.add_gridspec(2, 4, height_ratios=[2.5, 1], 
+                                   width_ratios=[3, 1.2, 1.2, 1.2],
+                                   hspace=0.25, wspace=0.15,
+                                   left=0.03, right=0.97, top=0.95, bottom=0.05)
         
         # 创建子图
         self.axes['frame'] = self.fig.add_subplot(gs[0, 0])
         self.axes['info'] = self.fig.add_subplot(gs[0, 1])
         self.axes['events'] = self.fig.add_subplot(gs[0, 2])
+        self.axes['shortcuts'] = self.fig.add_subplot(gs[0, 3])
         self.axes['y_plot'] = self.fig.add_subplot(gs[1, 0])
         self.axes['speed_plot'] = self.fig.add_subplot(gs[1, 1])
-        self.axes['buttons'] = self.fig.add_subplot(gs[1, 2])
+        self.axes['buttons'] = self.fig.add_subplot(gs[1, 2:])
+        
+        # 设置所有面板的背景色
+        for name, ax in self.axes.items():
+            ax.set_facecolor(THEME['bg_panel'])
         
         # 初始化可视化组件
         self.visualizers['frame'] = FrameVisualizer(self.axes['frame'])
@@ -140,6 +154,10 @@ class LabelingTool:
         )
         self.visualizers['info'] = InfoPanel(self.axes['info'])
         self.visualizers['events'] = EventListPanel(self.axes['events'])
+        self.visualizers['shortcuts'] = ShortcutPanel(self.axes['shortcuts'])
+        
+        # 绘制快捷键面板（静态）
+        self.visualizers['shortcuts'].draw()
         
         # 设置按钮区域
         self._setup_buttons()
@@ -147,37 +165,75 @@ class LabelingTool:
         # 绑定键盘事件
         self.fig.canvas.mpl_connect('key_press_event', self._on_key_press)
         
-        # 初始绘制
+        # Add status bar
+        self._status_text = self.fig.text(
+            0.5, 0.01, 'Ready | Press Q to quit, S to save',
+            ha='center', va='bottom',
+            fontsize=10, color=THEME['text_secondary'],
+            fontfamily='monospace'
+        )
+        
+        # Initial draw
         self._update_display()
     
     def _setup_buttons(self):
-        """设置按钮"""
+        """Setup buttons with modern style"""
         ax = self.axes['buttons']
         ax.axis('off')
+        ax.set_facecolor(THEME['bg_panel'])
         
-        # 按钮位置
+        # Button config: (x, y, w, h, label, callback, color)
         button_specs = [
-            (0.1, 0.75, 0.35, 0.15, 'Prev Frame (←)', self._prev_frame),
-            (0.55, 0.75, 0.35, 0.15, 'Next Frame (→)', self._next_frame),
-            (0.1, 0.55, 0.35, 0.15, 'Prev Event (↑)', self._prev_event),
-            (0.55, 0.55, 0.35, 0.15, 'Next Event (↓)', self._next_event),
-            (0.1, 0.35, 0.35, 0.15, 'Confirm (Y)', lambda e: self._confirm_event()),
-            (0.55, 0.35, 0.35, 0.15, 'Delete (D)', lambda e: self._delete_event()),
-            (0.1, 0.15, 0.35, 0.15, 'Save (S)', lambda e: self._save()),
-            (0.55, 0.15, 0.35, 0.15, 'Quit (Q)', lambda e: self._quit()),
+            # Row 1 - Navigation
+            (0.02, 0.72, 0.22, 0.22, '< Prev\n(<- A)', self._prev_frame, '#3498DB'),
+            (0.26, 0.72, 0.22, 0.22, 'Next >\n(-> D)', self._next_frame, '#3498DB'),
+            (0.50, 0.72, 0.22, 0.22, '^ PrevEvt\n(Up W)', self._prev_event, '#9B59B6'),
+            (0.74, 0.72, 0.22, 0.22, 'NextEvt v\n(Down)', self._next_event, '#9B59B6'),
+            
+            # Row 2 - Edit
+            (0.02, 0.40, 0.22, 0.22, 'Confirm\n(Y)', lambda e: self._confirm_event(), '#27AE60'),
+            (0.26, 0.40, 0.22, 0.22, 'Delete\n(Del)', lambda e: self._delete_event(), '#E74C3C'),
+            (0.50, 0.40, 0.22, 0.22, '* Land\n(L)', lambda e: self._set_event_type('landing'), '#FF6B6B'),
+            (0.74, 0.40, 0.22, 0.22, '+ Hit\n(H)', lambda e: self._set_event_type('hit'), '#4ECDC4'),
+            
+            # Row 3 - System
+            (0.02, 0.08, 0.30, 0.22, 'Save (Ctrl+S)', lambda e: self._save(), '#F39C12'),
+            (0.34, 0.08, 0.30, 0.22, 'Quit (Q)', lambda e: self._quit(), '#95A5A6'),
+            (0.66, 0.08, 0.30, 0.22, 'Add Event (N)', lambda e: self._add_event(), '#1ABC9C'),
         ]
         
         self.buttons = []
-        for x, y, w, h, label, callback in button_specs:
+        for x, y, w, h, label, callback, color in button_specs:
             btn_ax = self.fig.add_axes([
                 ax.get_position().x0 + x * ax.get_position().width,
                 ax.get_position().y0 + y * ax.get_position().height,
-                w * ax.get_position().width * 0.9,
-                h * ax.get_position().height * 0.8
+                w * ax.get_position().width * 0.95,
+                h * ax.get_position().height * 0.85
             ])
-            btn = Button(btn_ax, label)
+            btn_ax.set_facecolor(color)
+            
+            btn = Button(btn_ax, label, color=color, hovercolor=self._lighten_color(color))
+            btn.label.set_fontsize(9)
+            btn.label.set_fontweight('bold')
+            btn.label.set_color('white')
             btn.on_clicked(callback)
             self.buttons.append(btn)
+    
+    def _lighten_color(self, hex_color: str, factor: float = 0.3) -> str:
+        """Lighten a color"""
+        hex_color = hex_color.lstrip('#')
+        r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        r = min(255, int(r + (255 - r) * factor))
+        g = min(255, int(g + (255 - g) * factor))
+        b = min(255, int(b + (255 - b) * factor))
+        return f'#{r:02x}{g:02x}{b:02x}'
+    
+    def _update_status(self, message: str):
+        """Update status bar"""
+        if hasattr(self, '_status_text'):
+            modified_mark = ' [Modified]' if self.modified else ''
+            self._status_text.set_text(f'{message}{modified_mark}')
+            self.fig.canvas.draw_idle()
     
     def _update_display(self):
         """更新显示"""
@@ -293,24 +349,30 @@ class LabelingTool:
         self.current_frame = frame
         self._update_display()
     
-    # ==================== 事件编辑 ====================
+    # ==================== Event Editing ====================
     
     def _confirm_event(self):
-        """确认当前事件"""
+        """Confirm current event"""
         if self.data_manager.confirm_event(self.current_frame):
             self.modified = True
-            print(f"Confirmed event at frame {self.current_frame}")
+            print(f"[OK] Confirmed event at frame {self.current_frame}")
+            self._update_status(f'Confirmed: F{self.current_frame}')
             self._update_display()
+        else:
+            self._update_status('No event to confirm')
     
     def _delete_event(self):
-        """删除当前事件"""
+        """Delete current event"""
         if self.data_manager.remove_event(self.current_frame):
             self.modified = True
-            print(f"Deleted event at frame {self.current_frame}")
+            print(f"[X] Deleted event at frame {self.current_frame}")
+            self._update_status(f'Deleted: F{self.current_frame}')
             self._update_display()
+        else:
+            self._update_status('No event to delete')
     
     def _add_event(self, event_type: str = 'landing'):
-        """在当前帧添加事件"""
+        """Add event at current frame"""
         x, y, vis = self.data_manager.get_trajectory_at_frame(self.current_frame)
         
         event = {
@@ -320,120 +382,194 @@ class LabelingTool:
             'event_type': event_type,
             'rule': 'manual',
             'confidence': 1.0,
-            'confirmed': True  # 手动添加的自动确认
+            'confirmed': True  # Manual events auto-confirmed
         }
         
         self.data_manager.add_event(event)
         self.modified = True
-        print(f"Added {event_type} event at frame {self.current_frame}")
+        print(f"[+] Added {event_type} at frame {self.current_frame}")
+        self._update_status(f'Added: F{self.current_frame}')
         self._update_display()
     
     def _set_event_type(self, event_type: str):
-        """设置当前事件的类型"""
+        """Set event type"""
         if self.data_manager.update_event(self.current_frame, 
                                           {'event_type': event_type, 'confirmed': True}):
             self.modified = True
-            print(f"Set event type to {event_type} at frame {self.current_frame}")
+            print(f"[*] Set event at frame {self.current_frame} to {event_type}")
         else:
-            # 当前帧没有事件，添加一个
+            # No event at current frame, add one
             self._add_event(event_type)
         self._update_display()
     
-    # ==================== 保存/退出 ====================
+    # ==================== Save/Quit ====================
     
     def _save(self):
-        """保存标注"""
+        """Save labels"""
         save_path = self.data_manager.save_labels()
         self.modified = False
-        print(f"Labels saved to {save_path}")
+        print(f"[Save] Labels saved to: {save_path}")
+        self._update_status(f'Saved: {save_path}')
     
     def _quit(self):
-        """退出"""
+        """Quit"""
         if self.modified:
-            # 提示保存
-            print("\n⚠️  You have unsaved changes!")
-            response = input("Save before quitting? (y/n/c): ").strip().lower()
+            # Prompt save
+            print("\n[!] You have unsaved changes!")
+            response = input("Save before quit? (y=save/n=no/c=cancel): ").strip().lower()
             if response == 'y':
                 self._save()
             elif response == 'c':
-                return  # 取消退出
+                print("Cancelled")
+                return  # Cancel quit
+            else:
+                print("Discarded changes")
         
         self.running = False
         plt.close(self.fig)
+        print("\n[Bye] Labeling tool closed")
     
-    # ==================== 键盘事件 ====================
+    # ==================== Keyboard Events ====================
     
     def _on_key_press(self, event):
-        """键盘事件处理"""
-        key = event.key.lower() if event.key else ''
+        """
+        Keyboard event handler
         
-        # 导航
+        Full shortcut mapping:
+        - Navigate: <- -> Up Down A D W (D for next frame, not delete)
+        - Quick jump: Home End PageUp PageDown
+        - Edit: Y(confirm) Delete(delete) L(land) H(hit) O(oof) N(add)
+        - System: Ctrl+S(save) S(save) Q Escape(quit)
+        """
+        if event.key is None:
+            return
+        
+        key = event.key.lower()
+        
+        # ===== Navigation =====
+        # Previous frame: Left arrow or A
         if key in ['left', 'a']:
             self._prev_frame()
-        elif key in ['right', 'd']:
+            self._update_status(f'Prev: F{self.current_frame}')
+            return
+        
+        # Next frame: Right arrow or D
+        if key in ['right', 'd']:
             self._next_frame()
-        elif key in ['up', 'w']:
+            self._update_status(f'Next: F{self.current_frame}')
+            return
+        
+        # Previous event: Up arrow or W
+        if key in ['up', 'w']:
             self._prev_event()
-        elif key in ['down', 's'] and not event.key == 's':
+            self._update_status(f'Prev event: F{self.current_frame}')
+            return
+        
+        # Next event: Down arrow (S is for save)
+        if key == 'down':
             self._next_event()
+            self._update_status(f'Next event: F{self.current_frame}')
+            return
         
-        # 快速跳转
-        elif key == 'home':
+        # ===== Quick Jump =====
+        if key == 'home':
             self._jump_to_frame(0)
-        elif key == 'end':
+            self._update_status('Jump to first')
+            return
+        
+        if key == 'end':
             self._jump_to_frame(self.data_manager.metadata['total_frames'] - 1)
-        elif key == 'pageup':
+            self._update_status('Jump to last')
+            return
+        
+        if key == 'pageup':
             self._jump_to_frame(self.current_frame - 30)
-        elif key == 'pagedown':
+            self._update_status(f'-30: F{self.current_frame}')
+            return
+        
+        if key == 'pagedown':
             self._jump_to_frame(self.current_frame + 30)
+            self._update_status(f'+30: F{self.current_frame}')
+            return
         
-        # 事件编辑
-        elif key == 'y':
+        # ===== Event Editing =====
+        # Confirm: Y
+        if key == 'y':
             self._confirm_event()
-        elif key == 'delete' or (key == 'd' and not event.key == 'right'):
-            self._delete_event()
-        elif key == 'l':
-            self._set_event_type('landing')
-        elif key == 'h':
-            self._set_event_type('hit')
-        elif key == 'o':
-            self._set_event_type('out_of_frame')
-        elif key == 'n':
-            self._add_event('other')
+            return
         
-        # 保存/退出
-        elif key == 's':
+        # Delete: Delete or Backspace
+        if key in ['delete', 'backspace']:
+            self._delete_event()
+            return
+        
+        # Set event type
+        if key == 'l':
+            self._set_event_type('landing')
+            self._update_status('Set: Landing')
+            return
+        
+        if key == 'h':
+            self._set_event_type('hit')
+            self._update_status('Set: Hit')
+            return
+        
+        if key == 'o':
+            self._set_event_type('out_of_frame')
+            self._update_status('Set: Out-of-frame')
+            return
+        
+        # Add new event: N
+        if key == 'n':
+            self._add_event('landing')  # Default to landing
+            return
+        
+        # ===== System =====
+        # Save: Ctrl+S or S
+        if key == 's' or key == 'ctrl+s':
             self._save()
-        elif key == 'q' or key == 'escape':
+            return
+        
+        # Quit: Q or Escape
+        if key in ['q', 'escape']:
             self._quit()
+            return
     
-    # ==================== 运行 ====================
+    # ==================== Run ====================
     
     def run(self):
-        """启动标注工具"""
-        print("\n" + "="*60)
-        print("  Bounce Detection Labeling Tool")
-        print("="*60)
-        print(f"CSV: {self.data_manager.csv_path}")
-        print(f"Video: {self.data_manager.video_path or 'Not loaded'}")
-        print(f"Total frames: {self.data_manager.metadata['total_frames']}")
-        print(f"Pre-filled events: {len(self.data_manager.events)}")
-        print("="*60)
-        print("\nKeyboard shortcuts:")
-        print("  ← → : Previous/Next frame")
-        print("  ↑ ↓ : Previous/Next event")
-        print("  Y   : Confirm event")
-        print("  D   : Delete event")
-        print("  L/H/O : Set as Landing/Hit/Out-of-frame")
-        print("  N   : Add new event")
-        print("  S   : Save labels")
-        print("  Q   : Quit")
-        print("="*60 + "\n")
+        """Start labeling tool"""
+        # Print startup info
+        print("\n" + "="*65)
+        print("  Badminton Bounce Detection Labeling Tool v2.0")
+        print("="*65)
+        print(f"  CSV: {self.data_manager.csv_path}")
+        print(f"  Video: {self.data_manager.video_path or 'Not loaded'}")
+        print(f"  Total frames: {self.data_manager.metadata['total_frames']}")
+        print(f"  Pre-filled events: {len(self.data_manager.events)}")
+        print("="*65)
+        print("\n  Keyboard Shortcuts:")
+        print("  +-----------------------------------------------------------+")
+        print("  | Navigate                                                  |")
+        print("  |   <- / A    Prev frame     -> / D    Next frame           |")
+        print("  |   Up / W    Prev event     Down      Next event           |")
+        print("  |   Home      First frame    End       Last frame           |")
+        print("  |   PageUp    -30 frames     PageDown  +30 frames           |")
+        print("  +-----------------------------------------------------------+")
+        print("  | Edit                                                      |")
+        print("  |   Y         Confirm        Delete    Delete event         |")
+        print("  |   L         Set Landing    H         Set Hit              |")
+        print("  |   O         Set OOF        N         Add new event        |")
+        print("  +-----------------------------------------------------------+")
+        print("  | System                                                    |")
+        print("  |   S / Ctrl+S  Save         Q / Esc   Quit                 |")
+        print("  +-----------------------------------------------------------+")
+        print("="*65 + "\n")
         
         self._setup_ui()
         self.running = True
         
-        # 如果有预填充的事件，跳转到第一个
+        # If there are pre-filled events, jump to first one
         if self.data_manager.events:
             self.current_frame = self.data_manager.events[0]['frame']
             self.current_event_idx = 0
@@ -445,7 +581,7 @@ class LabelingTool:
 
 
 def main():
-    """命令行入口"""
+    """CLI entry"""
     import argparse
     
     parser = argparse.ArgumentParser(description='Bounce Detection Labeling Tool')
