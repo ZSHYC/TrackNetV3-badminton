@@ -73,7 +73,9 @@ TrackNetV3 输出 (CSV/Dict)
 │  │ • a_x, a_y       │    │ • 规则2: speed_drop          │  │
 │  │ • speed          │    │ • 规则3: vy_reversal         │  │
 │  │ • direction      │    │ • 规则4: vx_reversal         │  │
-│  │ • curvature      │    │ • 规则5: trajectory_end      │  │
+│  │ • curvature      │    │ • 规则5: y_local_min         │  │
+│  │                  │    │ • 规则6: speed_local_max     │  │
+│  │                  │    │ • 规则7: trajectory_end      │  │
 │  └──────────────────┘    └───────────────────────────────┘  │
 │                                     │                        │
 │                                     ▼                        │
@@ -219,7 +221,9 @@ Landing (落地点) 检测策略:
 
 Hit (击球点) 检测策略:
 ├── vy_reversal: Y方向速度反转 + 速度保持较高
-└── vx_reversal: X方向速度反转 + 速度保持较高
+├── vx_reversal: X方向速度反转 + 速度保持较高
+├── y_local_min: Y坐标局部极小值 (球最高点) [新增]
+└── speed_local_max: 速度局部极大值 (击球瞬间) [新增]
 
 Out-of-Frame (出画面) 检测策略:
 └── visibility_drop_edge: 在画面边缘消失
@@ -385,7 +389,58 @@ is_edge = (x < 20 or x > img_width - 20 or
 
 ---
 
-### 规则 5: trajectory_end (轨迹结束)
+### 规则 5: y_local_min (Y坐标局部极小值) [新增]
+
+**触发条件**:
+- 当前帧Y坐标小于前后帧: `y[t] < y[t-1] and y[t] < y[t+1]`
+- 高度差超过阈值: `min(y[t-1] - y[t], y[t+1] - y[t]) > 5`
+
+**物理意义**: 羽毛球在被击中后上升到最高点（Y坐标最小），此时是击球后的顶点位置。
+
+**输出**:
+```python
+{
+    'event_type': 'hit',
+    'rule': 'y_local_min',
+    'confidence': 0.70,
+    'features': {
+        'y_current': 150.5,
+        'y_before': 165.2,
+        'y_after': 158.8,
+        'height_diff': 8.3
+    }
+}
+```
+
+---
+
+### 规则 6: speed_local_max (速度局部极大值) [新增]
+
+**触发条件**:
+- 当前帧速度大于前后帧: `speed[t] > speed[t-1] and speed[t] > speed[t+1]`
+- 速度超过阈值: `speed[t] > 15`
+- 速度差超过阈值: `min(speed[t] - speed[t-1], speed[t] - speed[t+1]) > 3`
+
+**物理意义**: 击球瞬间球获得最大速度，形成速度的局部极大值。
+
+**输出**:
+```python
+{
+    'event_type': 'hit',
+    'rule': 'speed_local_max',
+    'confidence': 0.65,
+    'features': {
+        'speed_current': 35.2,
+        'speed_before': 28.5,
+        'speed_after': 31.1,
+        'speed_diff': 3.6
+    }
+}
+```
+
+---
+
+### 规则 7: trajectory_end (轨迹结束)
 
 **触发条件**:
 - 是最后一个可见帧

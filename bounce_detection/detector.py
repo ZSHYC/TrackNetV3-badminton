@@ -61,7 +61,7 @@ class BounceDetector:
             min_visible_before=min_visible_before,
             merge_window=merge_window
         )
-        
+
         # Phase 2: BounceNet (待实现)
         self.bouncenet = None
         self.use_visual_features = use_visual_features

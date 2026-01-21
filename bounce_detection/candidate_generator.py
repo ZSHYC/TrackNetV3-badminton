@@ -345,12 +345,16 @@ class BounceCandidateGenerator:
         if len(candidates) <= 1:
             return candidates
         
-        # 规则优先级
+        # 规则优先级 (数值越大优先级越高)
         rule_priority = {
-            'y_velocity_reversal': 4,
-            'visibility_drop': 3,
-            'trajectory_end': 2,
-            'speed_drop': 1,
+            'vy_reversal': 6,           # Y速度反转 - 最可靠的击球检测
+            'vx_reversal': 5,           # X速度反转
+            'visibility_drop': 4,       # 可见性消失
+            'visibility_drop_edge': 3,  # 边缘消失
+            'trajectory_end': 2,        # 轨迹结束
+            'speed_drop': 2,            # 速度骤降
+            'y_local_min': 1,           # Y坐标局部极小值 (新增)
+            'speed_local_max': 1,       # 速度局部极大值 (新增)
             'direction_change': 0
         }
         
