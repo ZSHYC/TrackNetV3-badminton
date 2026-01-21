@@ -62,23 +62,63 @@ class BounceDetector:
             merge_window=merge_window
         )
 
-        # Phase 2: BounceNet (待实现)
+        # Phase 2: BounceNet
         self.bouncenet = None
+        self.bouncenet_predictor = None
         self.use_visual_features = use_visual_features
         if bouncenet_ckpt is not None:
             self._load_bouncenet(bouncenet_ckpt)
     
     def _load_bouncenet(self, ckpt_path: str):
-        """加载 BounceNet 模型 (Phase 2 实现)"""
-        # TODO: 在 Phase 2 实现
-        pass
+        """加载 BounceNet 模型"""
+        import torch
+        from .bouncenet import BounceNet, BounceNetPredictor
+        from .visual_features import VisualFeatureExtractor
+        
+        print(f"Loading BounceNet from {ckpt_path}...")
+        
+        # 加载检查点
+        checkpoint = torch.load(ckpt_path, map_location='cpu')
+        config = checkpoint.get('config', {})
+        
+        # 创建模型
+        mode = config.get('mode', 'trajectory_only')
+        self.bouncenet = BounceNet(
+            mode=mode,
+            traj_seq_len=config.get('traj_seq_len', 11),
+            traj_hidden_dim=config.get('traj_hidden_dim', 64),
+            traj_feature_dim=config.get('traj_feature_dim', 64),
+            num_classes=config.get('num_classes', 3)
+        )
+        self.bouncenet.load_state_dict(checkpoint['model_state_dict'])
+        
+        # 创建视觉特征提取器（如果需要）
+        feature_extractor = None
+        if self.use_visual_features and mode in ['visual_only', 'fusion']:
+            feature_extractor = VisualFeatureExtractor(
+                patch_size=config.get('patch_size', 64),
+                temporal_window=config.get('traj_seq_len', 11) // 2,
+                img_size=self.img_size
+            )
+        
+        # 创建预测器
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.bouncenet_predictor = BounceNetPredictor(
+            model=self.bouncenet,
+            feature_extractor=feature_extractor,
+            kinematics_calculator=self.kinematics_calculator,
+            device=device
+        )
+        
+        print(f"BounceNet loaded successfully (mode: {mode})")
     
     def detect(self,
                x: np.ndarray,
                y: np.ndarray,
                visibility: np.ndarray,
-               frames: Optional[np.ndarray] = None,
-               img_height: Optional[int] = None) -> List[Dict]:
+               frames: Optional[List[np.ndarray]] = None,
+               img_height: Optional[int] = None,
+               use_bouncenet: bool = True) -> List[Dict]:
         """
         检测事件（落地点 + 击球点）
         
@@ -86,8 +126,9 @@ class BounceDetector:
             x: x 坐标序列
             y: y 坐标序列  
             visibility: 可见性序列
-            frames: 视频帧数组 (Phase 2, 用于视觉特征)
+            frames: 视频帧列表 (Phase 2, 用于视觉特征)
             img_height: 图像高度 (保留兼容性)
+            use_bouncenet: 是否使用 BounceNet 进行精筛
         
         Returns:
             events: 检测到的事件列表（包含落地点和击球点）
@@ -98,7 +139,7 @@ class BounceDetector:
         # Step 1: 计算运动学特征
         kinematics = self.kinematics_calculator.compute(x, y, visibility)
         
-        # Step 2: 生成候选事件
+        # Step 2: 生成候选事件（规则方法）
         candidates = self.candidate_generator.generate(
             x, y, visibility, 
             kinematics=kinematics,
@@ -106,12 +147,24 @@ class BounceDetector:
         )
         
         # Phase 1: 直接返回候选
-        if self.bouncenet is None:
+        if self.bouncenet_predictor is None or not use_bouncenet:
             return candidates
         
         # Phase 2: 使用 BounceNet 进行精筛
-        # TODO: 实现
-        return candidates
+        classified = self.bouncenet_predictor.classify_candidates(
+            x, y, visibility, candidates, frames
+        )
+        
+        # 过滤掉预测为 'none' 的候选
+        filtered = []
+        for cand in classified:
+            if not cand.get('is_false_positive', False):
+                # 使用 BounceNet 的预测类型
+                if cand.get('predicted_type', cand['event_type']) != 'none':
+                    cand['event_type'] = cand.get('predicted_type', cand['event_type'])
+                    filtered.append(cand)
+        
+        return filtered
     
     def detect_from_csv(self, 
                         csv_path: str,

@@ -1,8 +1,13 @@
-# 半自动标注工具 (Phase 2)
+# 半自动标注工具
 
 **Semi-automatic Labeling Tool for Bounce Detection**
 
 基于 Phase 1 规则检测结果的交互式标注工具，用于生成 BounceNet 训练数据。
+
+> 📖 相关文档:
+> - [模块总览](../README.md)
+> - [Phase 1 规则检测](../README_phase1_rules.md)
+> - [Phase 2 BounceNet](../README_phase2_bouncenet.md)
 
 ---
 
