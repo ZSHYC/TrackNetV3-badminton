@@ -261,9 +261,9 @@ class LabelingTool:
         # 减小轨迹窗口大小，避免画面杂乱（前后各15帧）
         traj_window = dm.get_trajectory_window(self.current_frame, window_size=15)
         
-        # 获取窗口内的事件
+        # 获取窗口内的事件（只显示当前帧和未来的事件，避免历史事件遮挡视线）
         events = dm.get_events_in_range(
-            max(0, self.current_frame - 50),
+            self.current_frame,  # 从当前帧开始，不显示过去的事件
             min(dm.metadata['total_frames'], self.current_frame + 50)
         )
         current_event = dm.get_event_at_frame(self.current_frame)
