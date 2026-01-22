@@ -58,7 +58,8 @@ class BounceCandidateGenerator:
                  y: np.ndarray,
                  visibility: np.ndarray,
                  kinematics: Optional[Dict[str, np.ndarray]] = None,
-                 img_height: int = 288) -> List[Dict]:
+                 img_height: int = 288,
+                 img_width: int = 512) -> List[Dict]:
         """
         生成候选事件点（落地点 + 击球点）
         
@@ -93,9 +94,14 @@ class BounceCandidateGenerator:
         
         v_x = kinematics['v_x']
         v_y = kinematics['v_y']
+        a_x = kinematics['a_x']  # 加速度特征
+        a_y = kinematics['a_y']
         speed = kinematics['speed']
         
         candidates = []
+        
+        # 预计算加速度大小，用于击球检测
+        acceleration = np.sqrt(a_x**2 + a_y**2)
         
         for t in range(self.min_visible_before, n - 1):
             # 检查当前帧是否可见
@@ -117,9 +123,9 @@ class BounceCandidateGenerator:
                 recent_speed = np.mean(speed[max(0, t-3):t+1])
                 if recent_speed >= self.min_speed_before_landing:
                     # 判断是否是出画面（边缘位置）
-                    # 假设图像尺寸约 512x288 或类似比例
-                    is_edge = (x[t] < 20 or x[t] > img_height * 1.7 or 
-                               y[t] < 20 or y[t] > img_height * 0.95)
+                    edge_margin = 20
+                    is_edge = (x[t] < edge_margin or x[t] > img_width - edge_margin or 
+                               y[t] < edge_margin or y[t] > img_height - edge_margin)
                     
                     if is_edge:
                         # 可能是出画面
@@ -186,17 +192,20 @@ class BounceCandidateGenerator:
             
             # 规则3: Y方向速度反转 + 速度保持较高
             # 击球特征：球被击中后方向反转，但速度不会降到很低
-            if t > 0 and t + 1 < n and visibility[t+1] == 1:
-                vy_before = v_y[t-1]
-                vy_after = v_y[t]
+            # 注意：检测 t 帧前后的速度变化，击球发生在 t 帧
+            if t > 0 and t + 1 < n and visibility[t-1] == 1 and visibility[t+1] == 1:
+                # 使用 t 帧前后的速度来检测反转
+                vy_before = v_y[t-1]  # t-1 到 t 的速度
+                vy_at = v_y[t]        # t 帧的速度
+                vy_after = v_y[t+1]   # t+1 帧的速度
                 
-                # 检测明显的 y 方向反转
+                # 检测 t 帧处的 Y 方向反转（前后速度符号相反）
                 is_reversal = ((vy_before > self.vy_reversal_threshold and vy_after < -self.vy_reversal_threshold) or
                                (vy_before < -self.vy_reversal_threshold and vy_after > self.vy_reversal_threshold))
                 
                 if is_reversal:
                     # 击球后速度应该保持较高（与落地不同）
-                    speed_after = speed[t+1] if t+1 < n else speed[t]
+                    speed_after = speed[t+1]
                     if speed_after >= self.min_speed_at_hit:
                         candidates.append({
                             'frame': t,
@@ -204,9 +213,10 @@ class BounceCandidateGenerator:
                             'y': float(y[t]),
                             'event_type': 'hit',
                             'rule': 'vy_reversal',
-                            'confidence': 0.80,
+                            'confidence': 0.85,
                             'features': {
                                 'vy_before': float(vy_before),
+                                'vy_at': float(vy_at),
                                 'vy_after': float(vy_after),
                                 'speed_after': float(speed_after)
                             }
@@ -214,17 +224,18 @@ class BounceCandidateGenerator:
                         continue
             
             # 规则4: X方向速度反转 (水平击球)
-            if t > 0 and t + 1 < n and visibility[t+1] == 1:
+            if t > 0 and t + 1 < n and visibility[t-1] == 1 and visibility[t+1] == 1:
                 vx_before = v_x[t-1]
-                vx_after = v_x[t]
+                vx_at = v_x[t]
+                vx_after = v_x[t+1]
                 
-                # 检测明显的 x 方向反转
-                vx_threshold = self.vy_reversal_threshold  # 使用相同阈值
+                # 检测 t 帧处的 X 方向反转
+                vx_threshold = self.vy_reversal_threshold
                 is_x_reversal = ((vx_before > vx_threshold and vx_after < -vx_threshold) or
                                  (vx_before < -vx_threshold and vx_after > vx_threshold))
                 
                 if is_x_reversal:
-                    speed_after = speed[t+1] if t+1 < n else speed[t]
+                    speed_after = speed[t+1]
                     if speed_after >= self.min_speed_at_hit:
                         # 检查是否已经被 vy_reversal 检测到
                         if not any(c['frame'] == t for c in candidates):
@@ -234,26 +245,30 @@ class BounceCandidateGenerator:
                                 'y': float(y[t]),
                                 'event_type': 'hit',
                                 'rule': 'vx_reversal',
-                                'confidence': 0.75,
+                                'confidence': 0.80,
                                 'features': {
                                     'vx_before': float(vx_before),
+                                    'vx_at': float(vx_at),
                                     'vx_after': float(vx_after),
                                     'speed_after': float(speed_after)
                                 }
                             })
                             continue
             
-            # 规则5: Y坐标局部极小值 (球到达最高点 = 击球后上升的顶点)
-            # 图像坐标系中 Y 向下，所以 Y 极小值 = 球的最高点
-            if t > 1 and t + 2 < n:
-                # 检查是否是局部极小值: y[t-1] > y[t] < y[t+1]
-                if (visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1):
-                    is_y_minimum = (y[t] < y[t-1] and y[t] < y[t+1])
+            # 规则5: 加速度突变（击球瞬间加速度会有明显突变）
+            # 这是比较可靠的击球检测特征
+            if t > 1 and t + 1 < n:
+                if visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1:
+                    acc_current = acceleration[t]
+                    acc_before = acceleration[t-1]
+                    acc_after = acceleration[t+1]
                     
-                    # 确保不是噪声（需要有一定的高度差）
-                    height_diff = min(y[t-1] - y[t], y[t+1] - y[t])
+                    # 加速度局部极大值，且足够显著
+                    acc_threshold = 3.0  # 加速度阈值（像素/帧²）
+                    is_acc_peak = (acc_current > acc_before and acc_current > acc_after and 
+                                   acc_current > acc_threshold)
                     
-                    if is_y_minimum and height_diff > 0:  # 至少3像素的高度差
+                    if is_acc_peak:
                         # 避免重复
                         if not any(c['frame'] == t for c in candidates):
                             candidates.append({
@@ -261,8 +276,38 @@ class BounceCandidateGenerator:
                                 'x': float(x[t]),
                                 'y': float(y[t]),
                                 'event_type': 'hit',
-                                'rule': 'y_local_min',
-                                'confidence': 0.70,
+                                'rule': 'acceleration_peak',
+                                'confidence': 0.75,
+                                'features': {
+                                    'acc_before': float(acc_before),
+                                    'acc_current': float(acc_current),
+                                    'acc_after': float(acc_after),
+                                    'speed': float(speed[t])
+                                }
+                            })
+                            continue
+            
+            # 规则6: Y坐标局部极大值 (球到达最低点)
+            # 图像坐标系: Y向下为正，所以 Y 极大值 = 球的最低点（接近地面）
+            # 这可能是落地点的候选
+            if t > 0 and t + 1 < n:
+                if visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1:
+                    is_y_maximum = (y[t] > y[t-1] and y[t] > y[t+1])
+                    
+                    # 确保不是噪声（需要有一定的高度差）
+                    height_diff = min(y[t] - y[t-1], y[t] - y[t+1])
+                    
+                    # 提高高度差阈值，减少误检
+                    if is_y_maximum and height_diff > 5:  # 至少5像素的高度差
+                        # 避免重复
+                        if not any(c['frame'] == t for c in candidates):
+                            candidates.append({
+                                'frame': t,
+                                'x': float(x[t]),
+                                'y': float(y[t]),
+                                'event_type': 'landing',
+                                'rule': 'y_local_max',
+                                'confidence': 0.60,
                                 'features': {
                                     'y_before': float(y[t-1]),
                                     'y_current': float(y[t]),
@@ -272,17 +317,17 @@ class BounceCandidateGenerator:
                             })
                             continue
             
-            # 规则6: 速度局部极大值 (击球瞬间速度达到峰值)
-            if t > 1 and t + 2 < n:
-                # 检查是否是局部极大值: speed[t-1] < speed[t] > speed[t+1]
-                if (visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1):
+            # 规则7: 速度局部极大值 (击球瞬间速度达到峰值)
+            if t > 0 and t + 1 < n:
+                if visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1:
+                    # 检查是否是局部极大值
                     is_speed_maximum = (speed[t] > speed[t-1] and speed[t] > speed[t+1])
                     
                     # 确保速度足够高，不是噪声
-                    speed_threshold = 10.0  # 最小峰值速度阈值
+                    speed_threshold = 10.0  # 提高最小峰值速度阈值
                     speed_diff = min(speed[t] - speed[t-1], speed[t] - speed[t+1])
                     
-                    if is_speed_maximum and speed[t] > speed_threshold and speed_diff > 0:
+                    if is_speed_maximum and speed[t] > speed_threshold and speed_diff > 2:
                         # 避免重复
                         if not any(c['frame'] == t for c in candidates):
                             candidates.append({
@@ -291,7 +336,7 @@ class BounceCandidateGenerator:
                                 'y': float(y[t]),
                                 'event_type': 'hit',
                                 'rule': 'speed_local_max',
-                                'confidence': 0.65,
+                                'confidence': 0.60,  # 降低置信度
                                 'features': {
                                     'speed_before': float(speed[t-1]),
                                     'speed_current': float(speed[t]),
@@ -347,14 +392,15 @@ class BounceCandidateGenerator:
         
         # 规则优先级 (数值越大优先级越高)
         rule_priority = {
-            'vy_reversal': 6,           # Y速度反转 - 最可靠的击球检测
-            'vx_reversal': 5,           # X速度反转
+            'vy_reversal': 7,           # Y速度反转 - 最可靠的击球检测
+            'vx_reversal': 6,           # X速度反转
+            'acceleration_peak': 5,     # 加速度峰值
             'visibility_drop': 4,       # 可见性消失
             'visibility_drop_edge': 3,  # 边缘消失
+            'speed_drop': 3,            # 速度骤降
+            'y_local_max': 3,         # Y坐标局部极大值 (球最低点，落地候选)
             'trajectory_end': 2,        # 轨迹结束
-            'speed_drop': 2,            # 速度骤降
-            'y_local_min': 1,           # Y坐标局部极小值 (新增)
-            'speed_local_max': 1,       # 速度局部极大值 (新增)
+            'speed_local_max': 3,      # 速度局部极大值
             'direction_change': 0
         }
         
@@ -365,33 +411,37 @@ class BounceCandidateGenerator:
         i = 0
         while i < len(candidates):
             group = [candidates[i]]
+            base_frame = candidates[i]['frame']
             j = i + 1
             
-            # 收集在 merge_window 内的所有候选
-            while j < len(candidates) and candidates[j]['frame'] - candidates[i]['frame'] <= self.merge_window:
+            # 收集在 merge_window 内的所有候选（使用滑动窗口）
+            while j < len(candidates) and candidates[j]['frame'] - base_frame <= self.merge_window:
                 group.append(candidates[j])
                 j += 1
             
-            # 选择最佳候选
+            # 选择最佳候选（优先级 > 置信度）
             best = max(group, key=lambda c: (
                 rule_priority.get(c['rule'], 0),
                 c['confidence']
             ))
             merged.append(best)
             
+            # 跳过所有已合并的候选
             i = j
         
         return merged
     
     def generate_from_csv(self, 
                           csv_path: str,
-                          img_height: int = 288) -> List[Dict]:
+                          img_height: int = 288,
+                          img_width: int = 512) -> List[Dict]:
         """
         从 CSV 文件读取轨迹并生成候选
         
         Args:
             csv_path: CSV 文件路径 (格式: Frame, Visibility, X, Y)
             img_height: 图像高度
+            img_width: 图像宽度
         
         Returns:
             candidates: 候选落点列表
@@ -405,7 +455,7 @@ class BounceCandidateGenerator:
         y = df['Y'].values
         visibility = df['Visibility'].values
         
-        return self.generate(x, y, visibility, img_height=img_height)
+        return self.generate(x, y, visibility, img_height=img_height, img_width=img_width)
 
 
 class RallyBounceDetector:
@@ -424,7 +474,8 @@ class RallyBounceDetector:
                         x: np.ndarray,
                         y: np.ndarray,
                         visibility: np.ndarray,
-                        img_height: int = 288) -> Dict:
+                        img_height: int = 288,
+                        img_width: int = 512) -> Dict:
         """
         检测一个回合中的所有落点
         
@@ -438,7 +489,8 @@ class RallyBounceDetector:
                 }
             }
         """
-        candidates = self.generator.generate(x, y, visibility, img_height=img_height)
+        candidates = self.generator.generate(x, y, visibility, 
+                                            img_height=img_height, img_width=img_width)
         
         # 计算回合信息
         visibility = np.asarray(visibility)

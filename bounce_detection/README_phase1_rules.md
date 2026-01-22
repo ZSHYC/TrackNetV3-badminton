@@ -73,9 +73,10 @@ TrackNetV3 输出 (CSV/Dict)
 │  │ • a_x, a_y       │    │ • 规则2: speed_drop          │  │
 │  │ • speed          │    │ • 规则3: vy_reversal         │  │
 │  │ • direction      │    │ • 规则4: vx_reversal         │  │
-│  │ • curvature      │    │ • 规则5: y_local_min         │  │
-│  │                  │    │ • 规则6: speed_local_max     │  │
-│  │                  │    │ • 规则7: trajectory_end      │  │
+│  │ • curvature      │    │ • 规则5: acceleration_peak   │  │
+│  │                  │    │ • 规则6: y_local_max         │  │
+│  │                  │    │ • 规则7: speed_local_max     │  │
+│  │                  │    │ • 规则8: trajectory_end      │  │
 │  └──────────────────┘    └───────────────────────────────┘  │
 │                                     │                        │
 │                                     ▼                        │
@@ -222,8 +223,11 @@ Landing (落地点) 检测策略:
 Hit (击球点) 检测策略:
 ├── vy_reversal: Y方向速度反转 + 速度保持较高
 ├── vx_reversal: X方向速度反转 + 速度保持较高
-├── y_local_min: Y坐标局部极小值 (球最高点) [新增]
-└── speed_local_max: 速度局部极大值 (击球瞬间) [新增]
+├── acceleration_peak: 加速度突变 (击球瞬间)
+└── speed_local_max: 速度局部极大值 (击球瞬间)
+
+Landing (落地点) 补充策略:
+└── y_local_max: Y坐标局部极大值 (球最低点，接近地面)
 
 Out-of-Frame (出画面) 检测策略:
 └── visibility_drop_edge: 在画面边缘消失
@@ -389,32 +393,57 @@ is_edge = (x < 20 or x > img_width - 20 or
 
 ---
 
-### 规则 5: y_local_min (Y坐标局部极小值) [新增]
+### 规则 5: acceleration_peak (加速度突变)
 
 **触发条件**:
-- 当前帧Y坐标小于前后帧: `y[t] < y[t-1] and y[t] < y[t+1]`
-- 高度差超过阈值: `min(y[t-1] - y[t], y[t+1] - y[t]) > 5`
+- 当前帧加速度大于前后帧: `acc[t] > acc[t-1] and acc[t] > acc[t+1]`
+- 加速度超过阈值: `acc[t] > 3.0`
 
-**物理意义**: 羽毛球在被击中后上升到最高点（Y坐标最小），此时是击球后的顶点位置。
+**物理意义**: 击球瞬间加速度会有明显突变，球受到球拍的冲击力。
 
 **输出**:
 ```python
 {
     'event_type': 'hit',
-    'rule': 'y_local_min',
-    'confidence': 0.70,
+    'rule': 'acceleration_peak',
+    'confidence': 0.75,
     'features': {
-        'y_current': 150.5,
-        'y_before': 165.2,
-        'y_after': 158.8,
-        'height_diff': 8.3
+        'acc_before': 1.2,
+        'acc_current': 5.8,
+        'acc_after': 2.1,
+        'speed': 25.3
     }
 }
 ```
 
 ---
 
-### 规则 6: speed_local_max (速度局部极大值) [新增]
+### 规则 6: y_local_max (Y坐标局部极大值)
+
+**触发条件**:
+- 当前帧Y坐标大于前后帧: `y[t] > y[t-1] and y[t] > y[t+1]`
+- 高度差超过阈值: `min(y[t] - y[t-1], y[t] - y[t+1]) > 5`
+
+**物理意义**: 图像坐标系中Y向下为正，Y坐标最大表示球位置最低（接近地面），可能是落地点。
+
+**输出**:
+```python
+{
+    'event_type': 'landing',
+    'rule': 'y_local_max',
+    'confidence': 0.60,
+    'features': {
+        'y_current': 265.5,
+        'y_before': 250.2,
+        'y_after': 258.8,
+        'height_diff': 6.7
+    }
+}
+```
+
+---
+
+### 规则 7: speed_local_max (速度局部极大值)
 
 **触发条件**:
 - 当前帧速度大于前后帧: `speed[t] > speed[t-1] and speed[t] > speed[t+1]`

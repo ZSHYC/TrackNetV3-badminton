@@ -197,10 +197,11 @@ class BounceNet:
 
 | 规则 | 事件类型 | 置信度 | 描述 |
 |------|---------|--------|------|
-| `vy_reversal` | hit | 0.80 | Y方向速度反转 |
-| `vx_reversal` | hit | 0.75 | X方向速度反转 |
-| `y_local_min` | hit | 0.70 | Y坐标局部极小值（最高点） |
-| `speed_local_max` | hit | 0.65 | 速度局部极大值 |
+| `vy_reversal` | hit | 0.85 | Y方向速度反转 |
+| `vx_reversal` | hit | 0.80 | X方向速度反转 |
+| `acceleration_peak` | hit | 0.75 | 加速度突变 |
+| `y_local_max` | landing | 0.60 | Y坐标局部极大值（最低点） |
+| `speed_local_max` | hit | 0.60 | 速度局部极大值 |
 | `visibility_drop` | landing | 0.85 | 场内可见性消失 |
 | `speed_drop` | landing | 0.75 | 速度骤降 |
 | `trajectory_end` | landing | 0.70 | 轨迹结束 |
@@ -257,9 +258,13 @@ python train_bouncenet.py \
   - 新增 `BounceNetDataset` 和训练脚本
   - 更新 `BounceDetector` 支持 BounceNet 集成
 
+- **v1.2** (2026-01-22): 修正规则逻辑
+  - 修正规则 6: `y_local_max` (Y坐标局部极大值/球最低点) 用于落地检测
+  - 新增规则 5: `acceleration_peak` (加速度突变) 用于击球检测
+  - 调整各规则置信度
+
 - **v1.1** (2026-01-20): 增强规则检测
-  - 新增规则 5: `y_local_min` (Y坐标局部极小值)
-  - 新增规则 6: `speed_local_max` (速度局部极大值)
+  - 新增规则: `speed_local_max` (速度局部极大值)
   - 候选召回率提升 ~29%
 
 - **v1.0** (2026-01-19): 初始版本
