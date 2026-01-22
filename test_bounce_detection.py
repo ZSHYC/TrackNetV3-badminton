@@ -64,9 +64,15 @@ def test_single_csv(csv_path: str, visualize: bool = False, save_dir: str = None
               f"Position ({cand['x']:.0f}, {cand['y']:.0f}) | "
               f"Rule: {cand['rule']:20s} | "
               f"Confidence: {cand['confidence']:.2f}")
+        # 显示所有触发的规则（如果有辅助规则）
+        if 'all_rules' in cand and len(cand.get('auxiliary_rules', [])) > 0:
+            print(f"       All rules: {cand['all_rules']}")
         if 'features' in cand:
+            # 只显示主要特征，跳过嵌套的辅助规则特征
+            main_features = {k: v for k, v in cand['features'].items() 
+                            if not isinstance(v, dict)}
             feat_str = ', '.join([f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}" 
-                                 for k, v in cand['features'].items()])
+                                 for k, v in main_features.items()])
             print(f"       Features: {feat_str}")
     
     print(f"\n=== Detected {len(hit_candidates)} HIT candidate(s) ===")
@@ -75,9 +81,15 @@ def test_single_csv(csv_path: str, visualize: bool = False, save_dir: str = None
               f"Position ({cand['x']:.0f}, {cand['y']:.0f}) | "
               f"Rule: {cand['rule']:20s} | "
               f"Confidence: {cand['confidence']:.2f}")
+        # 显示所有触发的规则（如果有辅助规则）
+        if 'all_rules' in cand and len(cand.get('auxiliary_rules', [])) > 0:
+            print(f"       All rules: {cand['all_rules']} (auxiliary boosted!)")
         if 'features' in cand:
+            # 只显示主要特征，跳过嵌套的辅助规则特征
+            main_features = {k: v for k, v in cand['features'].items() 
+                            if not isinstance(v, dict)}
             feat_str = ', '.join([f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}" 
-                                 for k, v in cand['features'].items()])
+                                 for k, v in main_features.items()])
             print(f"       Features: {feat_str}")
     
     if out_candidates:

@@ -535,15 +535,41 @@ detector = BounceDetector(
     'x': 423.5,                      # X 坐标
     'y': 287.2,                      # Y 坐标
     'event_type': 'hit',             # 事件类型: 'landing' | 'hit' | 'out_of_frame'
-    'rule': 'vy_reversal',           # 触发规则
-    'confidence': 0.80,              # 置信度 (0-1)
+    'rule': 'vy_reversal',           # 主规则名称
+    'confidence': 0.90,              # 置信度 (0-1)，可被辅助规则增强
+    'all_rules': ['vy_reversal', 'y_local_max'],  # 所有触发的规则列表
+    'auxiliary_rules': ['y_local_max'],           # 辅助规则列表
     'features': {                    # 附加特征（规则相关）
         'vy_before': 15.5,
         'vy_after': -12.3,
-        'speed_after': 28.7
+        'speed_after': 28.7,
+        'reversal_magnitude': 27.8,
+        'y_local_max': {             # 辅助规则特征
+            'y_before': 250.2,
+            'y_current': 265.5,
+            'y_after': 258.8,
+            'height_diff': 6.7
+        }
     }
 }
 ```
+
+### 混合方案说明
+
+采用"主规则互斥 + 辅助规则叠加"的混合方案：
+
+**主规则（Primary Rules）**：决定事件类型，互斥
+- 击球类：`vy_reversal`, `vx_reversal`, `acceleration_peak`
+- 落地类：`visibility_drop`, `speed_drop`, `trajectory_end`
+- 出界类：`visibility_drop_edge`
+
+**辅助规则（Auxiliary Rules）**：提供额外证据，可叠加
+- `y_local_max`：Y坐标局部极大值
+- `speed_local_max`：速度局部极大值
+
+**置信度增强机制**：
+- 每个辅助规则对 hit 事件增加 +0.05 置信度
+- 置信度上限为 0.95
 
 ### 事件类型说明
 

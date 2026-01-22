@@ -16,6 +16,13 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
+# 使用统一的事件类型定义
+try:
+    from bounce_detection import EVENT_TYPES
+except ImportError:
+    # 回退定义，防止导入失败
+    EVENT_TYPES = ['landing', 'hit', 'out_of_frame', 'other']
+
 
 class LabelingDataManager:
     """
@@ -27,13 +34,14 @@ class LabelingDataManager:
     - 标注结果 (events)
     """
     
-    # 事件类型定义
-    EVENT_TYPES = ['landing', 'hit', 'out_of_frame', 'other']
+    # 使用模块级别的事件类型定义
+    EVENT_TYPES = EVENT_TYPES
     
     def __init__(self, 
                  video_path: Optional[str] = None,
                  csv_path: Optional[str] = None,
-                 label_path: Optional[str] = None):
+                 label_path: Optional[str] = None,
+                 lazy_load_video: bool = False):
         """
         初始化数据管理器
         
@@ -41,13 +49,19 @@ class LabelingDataManager:
             video_path: 视频文件路径
             csv_path: 轨迹 CSV 文件路径
             label_path: 已有标注文件路径 (可选)
+            lazy_load_video: 是否延迟加载视频帧（节省内存，适用于长视频）
         """
         self.video_path = video_path
         self.csv_path = csv_path
         self.label_path = label_path
+        self.lazy_load_video = lazy_load_video
         
         # 数据存储
         self.frames: List[np.ndarray] = []
+        self._video_cap: Optional[cv2.VideoCapture] = None  # 延迟加载时使用
+        self._frame_cache: Dict[int, np.ndarray] = {}  # 帧缓存
+        self._cache_size: int = 100  # 最大缓存帧数
+        
         self.trajectory: Dict[str, np.ndarray] = {}
         self.events: List[Dict] = []
         
@@ -69,7 +83,7 @@ class LabelingDataManager:
             self._load_labels()
     
     def _load_video(self):
-        """加载视频帧"""
+        """加载视频帧（或初始化延迟加载）"""
         cap = cv2.VideoCapture(self.video_path)
         
         if not cap.isOpened():
@@ -80,17 +94,27 @@ class LabelingDataManager:
             int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
             int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         )
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        self.frames = []
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            # 转换 BGR -> RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            self.frames.append(frame_rgb)
-        
-        cap.release()
+        if self.lazy_load_video:
+            # 延迟加载模式：保存 VideoCapture 对象
+            self._video_cap = cap
+            self.metadata['total_frames'] = total_frames
+            print(f"Video initialized (lazy mode): {total_frames} frames from {self.video_path}")
+        else:
+            # 立即加载所有帧
+            self.frames = []
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                # 转换 BGR -> RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.frames.append(frame_rgb)
+            
+            cap.release()
+            self.metadata['total_frames'] = len(self.frames)
+            print(f"Loaded {len(self.frames)} frames from {self.video_path}")
         self.metadata['total_frames'] = len(self.frames)
         print(f"Loaded {len(self.frames)} frames from {self.video_path}")
     
@@ -165,10 +189,56 @@ class LabelingDataManager:
         return save_path
     
     def get_frame(self, frame_idx: int) -> Optional[np.ndarray]:
-        """获取指定帧"""
-        if 0 <= frame_idx < len(self.frames):
-            return self.frames[frame_idx]
-        return None
+        """
+        获取指定帧
+        
+        支持两种模式:
+        - 立即加载模式: 直接从 self.frames 列表获取
+        - 延迟加载模式: 按需从视频文件读取，带 LRU 缓存
+        """
+        if self.lazy_load_video:
+            # 延迟加载模式
+            return self._get_frame_lazy(frame_idx)
+        else:
+            # 立即加载模式
+            if 0 <= frame_idx < len(self.frames):
+                return self.frames[frame_idx]
+            return None
+    
+    def _get_frame_lazy(self, frame_idx: int) -> Optional[np.ndarray]:
+        """延迟加载帧（带缓存）"""
+        if frame_idx < 0 or frame_idx >= self.metadata['total_frames']:
+            return None
+        
+        # 检查缓存
+        if frame_idx in self._frame_cache:
+            return self._frame_cache[frame_idx]
+        
+        # 从视频读取
+        if self._video_cap is None:
+            return None
+        
+        self._video_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = self._video_cap.read()
+        
+        if not ret:
+            return None
+        
+        # 转换 BGR -> RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # 更新缓存（简单 LRU：超过限制时删除最早的）
+        if len(self._frame_cache) >= self._cache_size:
+            oldest_key = next(iter(self._frame_cache))
+            del self._frame_cache[oldest_key]
+        self._frame_cache[frame_idx] = frame_rgb
+        
+        return frame_rgb
+    
+    def __del__(self):
+        """析构函数：释放视频资源"""
+        if hasattr(self, '_video_cap') and self._video_cap is not None:
+            self._video_cap.release()
     
     def get_trajectory_at_frame(self, frame_idx: int) -> Tuple[float, float, int]:
         """获取指定帧的轨迹坐标"""
@@ -271,7 +341,17 @@ class LabelingDataManager:
         self.events.sort(key=lambda e: e['frame'])
     
     def set_events_from_candidates(self, candidates: List[Dict]):
-        """从 Phase 1 候选设置事件（预填充）"""
+        """从 Phase 1 候选设置事件（预填充）
+        
+        保存的字段:
+        - frame, x, y: 位置信息
+        - event_type: 事件类型 (landing/hit/out_of_frame)
+        - rule: 主规则名称
+        - confidence: 置信度 (可能被辅助规则提升)
+        - all_rules: 所有触发的规则列表 (包括主规则和辅助规则)
+        - auxiliary_rules: 辅助规则列表 (用于置信度提升)
+        - features: 运动学特征字典
+        """
         self.events = []
         for cand in candidates:
             event = {
@@ -282,7 +362,10 @@ class LabelingDataManager:
                 'rule': cand.get('rule', 'manual'),
                 'confidence': cand.get('confidence', 0.5),
                 'confirmed': False,  # 待人工确认
-                'features': cand.get('features', {})
+                'features': cand.get('features', {}),
+                # 新增字段：混合方案的规则信息
+                'all_rules': cand.get('all_rules', [cand.get('rule', 'manual')]),
+                'auxiliary_rules': cand.get('auxiliary_rules', [])
             }
             self.events.append(event)
         self._sort_events()

@@ -36,14 +36,37 @@ class BounceDetector:
                  # 击球点检测参数
                  min_speed_at_hit: float = 5.0,
                  vy_reversal_threshold: float = 3.0,
+                 acc_threshold: float = 3.0,
+                 # 局部极值检测参数
+                 min_height_diff: float = 5.0,
+                 min_peak_speed: float = 10.0,
+                 min_speed_diff: float = 2.0,
                  # 通用参数
                  min_visible_before: int = 3,
                  merge_window: int = 3,
+                 edge_margin: int = 20,
                  # BounceNet 参数 (Phase 2)
                  bouncenet_ckpt: Optional[str] = None,
                  use_visual_features: bool = False):
         """
         初始化事件检测器
+        
+        Args:
+            fps: 视频帧率
+            speed_drop_ratio: 速度下降比例阈值
+            min_speed_before_landing: 落地前最小速度
+            max_speed_after_landing: 落地后最大速度
+            min_speed_at_hit: 击球时最小速度
+            vy_reversal_threshold: Y方向速度反转阈值
+            acc_threshold: 加速度阈值（像素/帧²）
+            min_height_diff: Y极值最小高度差（像素）
+            min_peak_speed: 速度极值最小峰值
+            min_speed_diff: 速度极值最小差值
+            min_visible_before: 事件前最少可见帧数
+            merge_window: 合并相邻候选的窗口大小
+            edge_margin: 边缘判定距离（像素）
+            bouncenet_ckpt: BounceNet 检查点路径
+            use_visual_features: 是否使用视觉特征
         """
         self.fps = fps
         self.img_size = (512, 288)  # 默认 TrackNet 输入尺寸
@@ -58,8 +81,13 @@ class BounceDetector:
             max_speed_after_landing=max_speed_after_landing,
             min_speed_at_hit=min_speed_at_hit,
             vy_reversal_threshold=vy_reversal_threshold,
+            acc_threshold=acc_threshold,
+            min_height_diff=min_height_diff,
+            min_peak_speed=min_peak_speed,
+            min_speed_diff=min_speed_diff,
             min_visible_before=min_visible_before,
-            merge_window=merge_window
+            merge_window=merge_window,
+            edge_margin=edge_margin
         )
 
         # Phase 2: BounceNet

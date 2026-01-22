@@ -402,8 +402,16 @@ class InfoPanel:
             lines.append(f"| Status: {confirmed:<12} |")
             lines.append(f"| Rule: {rule:<14} |")
             lines.append(f"| Conf: {conf:.2f}            |")
+            
+            # 显示辅助规则（如果有）
+            aux_rules = current_event.get('auxiliary_rules', [])
+            if aux_rules:
+                lines.append(f"| Boost: +{len(aux_rules)*0.05:.2f} ({len(aux_rules)} aux) |")
+            else:
+                lines.append("|                      |")
         else:
             lines.append("|   (No event here)    |")
+            lines.append("|                      |")
             lines.append("|                      |")
             lines.append("|                      |")
             lines.append("|                      |")

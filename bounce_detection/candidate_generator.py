@@ -84,20 +84,27 @@ class BounceCandidateGenerator:
         """
         生成候选事件点（落地点 + 击球点）
         
+        使用混合方案：
+        - 主规则（Primary）：决定事件类型，互斥
+        - 辅助规则（Auxiliary）：提供额外证据，可叠加增强置信度
+        
         Args:
             x: x 坐标序列
             y: y 坐标序列
             visibility: 可见性序列
             kinematics: 预计算的运动学特征 (可选)
-            img_height: 图像高度 (保留参数兼容性，但不再用于位置过滤)
+            img_height: 图像高度
+            img_width: 图像宽度
         
         Returns:
             candidates: 候选事件列表，每个候选包含:
                 - frame: 帧索引
                 - x, y: 坐标
-                - event_type: 'landing' (落地) 或 'hit' (击球)
-                - rule: 触发的规则名称
-                - confidence: 初始置信度
+                - event_type: 'landing' / 'hit' / 'out_of_frame'
+                - rule: 主规则名称
+                - confidence: 置信度（可被辅助规则增强）
+                - all_rules: 所有触发的规则列表
+                - auxiliary_rules: 辅助规则列表
                 - features: 附加特征信息
         """
         x = np.asarray(x, dtype=np.float64)
@@ -115,14 +122,14 @@ class BounceCandidateGenerator:
         
         v_x = kinematics['v_x']
         v_y = kinematics['v_y']
-        a_x = kinematics['a_x']  # 加速度特征
+        a_x = kinematics['a_x']
         a_y = kinematics['a_y']
         speed = kinematics['speed']
         
-        # 预计算加速度大小，用于击球检测
+        # 预计算加速度大小
         acceleration = np.sqrt(a_x**2 + a_y**2)
         
-        # 处理 NaN/Inf 值，避免计算异常
+        # 处理 NaN/Inf 值
         speed = np.nan_to_num(speed, nan=0.0, posinf=0.0, neginf=0.0)
         acceleration = np.nan_to_num(acceleration, nan=0.0, posinf=0.0, neginf=0.0)
         v_x = np.nan_to_num(v_x, nan=0.0, posinf=0.0, neginf=0.0)
@@ -140,256 +147,135 @@ class BounceCandidateGenerator:
             if visible_count < self.min_visible_before:
                 continue
             
-            # ==================== 落地点检测规则 ====================
+            # ==================== 第一步：检测主规则（互斥）====================
+            primary_candidate = None
+            primary_features = {}
             
-            # 规则1: 可见→不可见 + 之前速度较高
-            # 球落地后消失（被捡起或静止不动超出检测范围）
-            # 或者球飞出画面
-            if visibility[t] == 1 and visibility[t+1] == 0:
-                # 检查之前是否有运动（不是本来就静止的球）
-                recent_speed = np.mean(speed[max(0, t-3):t+1])
-                if recent_speed >= self.min_speed_before_landing:
-                    # 判断是否是出画面（边缘位置）
-                    is_edge = (x[t] < self.edge_margin or x[t] > img_width - self.edge_margin or 
-                               y[t] < self.edge_margin or y[t] > img_height - self.edge_margin)
-                    edge_distance = min(x[t], img_width - x[t], y[t], img_height - y[t])
-                    
-                    if is_edge:
-                        # 可能是出画面
-                        candidates.append({
-                            'frame': t,
-                            'x': float(x[t]),
-                            'y': float(y[t]),
-                            'event_type': 'out_of_frame',
-                            'rule': 'visibility_drop_edge',
-                            'confidence': 0.50,
-                            'features': {
-                                'speed_before': float(recent_speed),
-                                'v_y': float(v_y[t]),
-                                'visible_before': int(visible_count),
-                                'edge_distance': float(edge_distance)
-                            }
-                        })
-                    else:
-                        # 场内消失，更可能是落地
-                        candidates.append({
-                            'frame': t,
-                            'x': float(x[t]),
-                            'y': float(y[t]),
-                            'event_type': 'landing',
-                            'rule': 'visibility_drop',
-                            'confidence': 0.85,
-                            'features': {
-                                'speed_before': float(recent_speed),
-                                'v_y': float(v_y[t]),
-                                'visible_before': int(visible_count)
-                            }
-                        })
-                    continue
+            # ---------- 击球类主规则（按优先级排序）----------
             
-            # 规则2: 速度急剧下降 + 之后保持低速或消失
-            # 典型的落地特征：快速运动 → 突然减速 → 接近静止
-            if t > 0 and t + 2 < n:
-                speed_before = speed[t-1]
-                speed_current = speed[t]
-                speed_after = speed[t+1] if visibility[t+1] == 1 else 0
+            # 主规则1: Y方向速度反转（最可靠的击球检测）
+            if primary_candidate is None:
+                result = self._check_vy_reversal(t, n, visibility, v_y, speed)
+                if result:
+                    primary_candidate = {
+                        'event_type': 'hit',
+                        'rule': 'vy_reversal',
+                        'confidence': 0.85
+                    }
+                    primary_features = result
+            
+            # 主规则2: X方向速度反转（水平击球）
+            if primary_candidate is None:
+                result = self._check_vx_reversal(t, n, visibility, v_x, speed)
+                if result:
+                    primary_candidate = {
+                        'event_type': 'hit',
+                        'rule': 'vx_reversal',
+                        'confidence': 0.80
+                    }
+                    primary_features = result
+            
+            # 主规则3: 加速度突变
+            if primary_candidate is None:
+                result = self._check_acceleration_peak(t, n, visibility, acceleration, speed)
+                if result:
+                    primary_candidate = {
+                        'event_type': 'hit',
+                        'rule': 'acceleration_peak',
+                        'confidence': 0.75
+                    }
+                    primary_features = result
+            
+            # ---------- 落地类主规则 ----------
+            
+            # 主规则4: 可见→不可见（落地或出界）
+            if primary_candidate is None:
+                result = self._check_visibility_drop(t, n, x, y, visibility, speed, v_y, 
+                                                     img_height, img_width, visible_count)
+                if result:
+                    primary_candidate = {
+                        'event_type': result['event_type'],
+                        'rule': result['rule'],
+                        'confidence': result['confidence']
+                    }
+                    primary_features = result['features']
+            
+            # 主规则5: 速度急剧下降
+            if primary_candidate is None:
+                result = self._check_speed_drop(t, n, visibility, speed)
+                if result:
+                    primary_candidate = {
+                        'event_type': 'landing',
+                        'rule': 'speed_drop',
+                        'confidence': 0.75
+                    }
+                    primary_features = result
+            
+            # ==================== 第二步：检测辅助规则（可叠加）====================
+            auxiliary_rules = []
+            auxiliary_features = {}
+            confidence_boost = 0.0
+            
+            # 辅助规则1: Y坐标局部极大值
+            aux_result = self._check_y_local_max(t, n, y, visibility)
+            if aux_result:
+                auxiliary_rules.append('y_local_max')
+                auxiliary_features['y_local_max'] = aux_result
+                # 仅对 hit 类事件增强置信度
+                if primary_candidate and primary_candidate['event_type'] == 'hit':
+                    confidence_boost += 0.05
+            
+            # 辅助规则2: 速度局部极大值
+            aux_result = self._check_speed_local_max(t, n, speed, visibility)
+            if aux_result:
+                auxiliary_rules.append('speed_local_max')
+                auxiliary_features['speed_local_max'] = aux_result
+                # 仅对 hit 类事件增强置信度
+                if primary_candidate and primary_candidate['event_type'] == 'hit':
+                    confidence_boost += 0.05
+            
+            # ==================== 第三步：生成候选 ====================
+            if primary_candidate:
+                # 应用置信度增益（上限 0.95）
+                final_confidence = min(0.95, primary_candidate['confidence'] + confidence_boost)
                 
-                if speed_before >= self.min_speed_before_landing:
-                    speed_ratio = speed_current / (speed_before + 1e-6)
-                    
-                    # 速度急剧下降 且 之后保持低速
-                    if (speed_ratio < self.speed_drop_ratio and 
-                        speed_after <= self.max_speed_after_landing):
-                        candidates.append({
-                            'frame': t,
-                            'x': float(x[t]),
-                            'y': float(y[t]),
-                            'event_type': 'landing',
-                            'rule': 'speed_drop',
-                            'confidence': 0.75,
-                            'features': {
-                                'speed_ratio': float(speed_ratio),
-                                'speed_before': float(speed_before),
-                                'speed_current': float(speed_current),
-                                'speed_after': float(speed_after)
-                            }
-                        })
-                        continue
-            
-            # ==================== 击球点检测规则 ====================
-            
-            # 规则3: Y方向速度反转 + 速度保持较高
-            # 击球特征：球被击中后方向反转，但速度不会降到很低
-            # 注意：检测 t 帧前后的速度变化，击球发生在 t 帧
-            if t > 0 and t + 1 < n and visibility[t-1] == 1 and visibility[t+1] == 1:
-                # 使用 t 帧前后的速度来检测反转
-                vy_before = v_y[t-1]  # t-1 到 t 的速度
-                vy_after = v_y[t+1]   # t+1 帧的速度
+                # 合并特征
+                all_features = {**primary_features, **auxiliary_features}
                 
-                # 检测 t 帧处的 Y 方向反转（前后速度符号相反）
-                is_reversal = ((vy_before > self.vy_reversal_threshold and vy_after < -self.vy_reversal_threshold) or
-                               (vy_before < -self.vy_reversal_threshold and vy_after > self.vy_reversal_threshold))
+                candidate = {
+                    'frame': t,
+                    'x': float(x[t]),
+                    'y': float(y[t]),
+                    'event_type': primary_candidate['event_type'],
+                    'rule': primary_candidate['rule'],
+                    'confidence': final_confidence,
+                    'all_rules': [primary_candidate['rule']] + auxiliary_rules,
+                    'auxiliary_rules': auxiliary_rules,
+                    'features': all_features
+                }
+                candidates.append(candidate)
+            
+            # 特殊情况：只有辅助规则触发（没有主规则）
+            elif auxiliary_rules:
+                # 辅助规则单独触发时，作为低置信度候选
+                main_aux_rule = auxiliary_rules[0]
+                main_aux_features = auxiliary_features.get(main_aux_rule, {})
                 
-                if is_reversal:
-                    # 击球后速度应该保持较高（与落地不同）
-                    speed_after = speed[t+1]
-                    if speed_after >= self.min_speed_at_hit:
-                        candidates.append({
-                            'frame': t,
-                            'x': float(x[t]),
-                            'y': float(y[t]),
-                            'event_type': 'hit',
-                            'rule': 'vy_reversal',
-                            'confidence': 0.85,
-                            'features': {
-                                'vy_before': float(vy_before),
-                                'vy_after': float(vy_after),
-                                'speed_after': float(speed_after),
-                                'reversal_magnitude': float(abs(vy_before - vy_after))
-                            }
-                        })
-                        continue
-            
-            # 规则4: X方向速度反转 (水平击球)
-            if t > 0 and t + 1 < n and visibility[t-1] == 1 and visibility[t+1] == 1:
-                vx_before = v_x[t-1]
-                vx_after = v_x[t+1]
-                
-                # 检测 t 帧处的 X 方向反转（使用与Y相同的阈值）
-                is_x_reversal = ((vx_before > self.vy_reversal_threshold and vx_after < -self.vy_reversal_threshold) or
-                                 (vx_before < -self.vy_reversal_threshold and vx_after > self.vy_reversal_threshold))
-                
-                if is_x_reversal:
-                    speed_after = speed[t+1]
-                    if speed_after >= self.min_speed_at_hit:
-                        # 检查是否已经被 vy_reversal 检测到
-                        if not any(c['frame'] == t for c in candidates):
-                            candidates.append({
-                                'frame': t,
-                                'x': float(x[t]),
-                                'y': float(y[t]),
-                                'event_type': 'hit',
-                                'rule': 'vx_reversal',
-                                'confidence': 0.80,
-                                'features': {
-                                    'vx_before': float(vx_before),
-                                    'vx_after': float(vx_after),
-                                    'speed_after': float(speed_after),
-                                    'reversal_magnitude': float(abs(vx_before - vx_after))
-                                }
-                            })
-                            continue
-            
-            # 规则5: 加速度突变（击球瞬间加速度会有明显突变）
-            # 这是比较可靠的击球检测特征
-            if t > 1 and t + 1 < n:
-                if visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1:
-                    acc_current = acceleration[t]
-                    acc_before = acceleration[t-1]
-                    acc_after = acceleration[t+1]
-                    
-                    # 加速度局部极大值，且足够显著
-                    is_acc_peak = (acc_current > acc_before and acc_current > acc_after and 
-                                   acc_current > self.acc_threshold)
-                    
-                    if is_acc_peak:
-                        # 避免重复
-                        if not any(c['frame'] == t for c in candidates):
-                            candidates.append({
-                                'frame': t,
-                                'x': float(x[t]),
-                                'y': float(y[t]),
-                                'event_type': 'hit',
-                                'rule': 'acceleration_peak',
-                                'confidence': 0.75,
-                                'features': {
-                                    'acc_before': float(acc_before),
-                                    'acc_current': float(acc_current),
-                                    'acc_after': float(acc_after),
-                                    'speed': float(speed[t]),
-                                    'acc_ratio': float(acc_current / (max(acc_before, acc_after) + 1e-6))
-                                }
-                            })
-                            continue
-            
-            # 规则6: Y坐标局部极大值 (球到达最低点)
-            # 图像坐标系: Y向下为正，所以 Y 极大值 = 球的最低点
-            # 这可能是低手击球的位置
-            if t > 0 and t + 1 < n:
-                if visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1:
-                    is_y_maximum = (y[t] > y[t-1] and y[t] > y[t+1])
-                    
-                    # 确保不是噪声（需要有一定的高度差）
-                    height_diff = min(y[t] - y[t-1], y[t] - y[t+1])
-                    
-                    # 使用可配置的高度差阈值
-                    if is_y_maximum and height_diff > self.min_height_diff:
-                        # 避免重复
-                        if not any(c['frame'] == t for c in candidates):
-                            candidates.append({
-                                'frame': t,
-                                'x': float(x[t]),
-                                'y': float(y[t]),
-                                'event_type': 'hit',
-                                'rule': 'y_local_max',
-                                'confidence': 0.60,
-                                'features': {
-                                    'y_before': float(y[t-1]),
-                                    'y_current': float(y[t]),
-                                    'y_after': float(y[t+1]),
-                                    'height_diff': float(height_diff)
-                                }
-                            })
-                            continue
-            
-            # 规则7: 速度局部极大值 (击球瞬间速度达到峰值)
-            if t > 0 and t + 1 < n:
-                if visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1:
-                    # 检查是否是局部极大值
-                    is_speed_maximum = (speed[t] > speed[t-1] and speed[t] > speed[t+1])
-                    
-                    # 确保速度足够高，不是噪声（使用可配置阈值）
-                    speed_diff = min(speed[t] - speed[t-1], speed[t] - speed[t+1])
-                    
-                    if is_speed_maximum and speed[t] > self.min_peak_speed and speed_diff > self.min_speed_diff:
-                        # 避免重复
-                        if not any(c['frame'] == t for c in candidates):
-                            candidates.append({
-                                'frame': t,
-                                'x': float(x[t]),
-                                'y': float(y[t]),
-                                'event_type': 'hit',
-                                'rule': 'speed_local_max',
-                                'confidence': 0.60,
-                                'features': {
-                                    'speed_before': float(speed[t-1]),
-                                    'speed_current': float(speed[t]),
-                                    'speed_after': float(speed[t+1]),
-                                    'speed_diff': float(speed_diff)
-                                }
-                            })
-                            continue
+                candidate = {
+                    'frame': t,
+                    'x': float(x[t]),
+                    'y': float(y[t]),
+                    'event_type': 'hit',  # 辅助规则默认为 hit
+                    'rule': main_aux_rule,
+                    'confidence': 0.50,  # 低置信度
+                    'all_rules': auxiliary_rules,
+                    'auxiliary_rules': auxiliary_rules[1:] if len(auxiliary_rules) > 1 else [],
+                    'features': auxiliary_features
+                }
+                candidates.append(candidate)
         
         # 检查轨迹末尾（回合结束时的落地）
-        last_visible_idx = self._find_last_visible(visibility)
-        if last_visible_idx is not None and last_visible_idx > self.min_visible_before:
-            # 检查结束前是否有运动
-            recent_speed = np.mean(speed[max(0, last_visible_idx-3):last_visible_idx+1])
-            if recent_speed >= self.min_speed_before_landing * 0.5:  # 放宽条件
-                # 避免与其他规则重复
-                if not any(c['frame'] == last_visible_idx for c in candidates):
-                    candidates.append({
-                        'frame': last_visible_idx,
-                        'x': float(x[last_visible_idx]),
-                        'y': float(y[last_visible_idx]),
-                        'event_type': 'landing',
-                        'rule': 'trajectory_end',
-                        'confidence': 0.70,
-                        'features': {
-                            'speed': float(speed[last_visible_idx]),
-                            'recent_avg_speed': float(recent_speed)
-                        }
-                    })
+        self._check_trajectory_end(x, y, visibility, speed, candidates)
         
         # 合并相邻候选
         candidates = self._merge_nearby_candidates(candidates)
@@ -398,6 +284,223 @@ class BounceCandidateGenerator:
         candidates.sort(key=lambda c: c['frame'])
         
         return candidates
+    
+    # ==================== 主规则检测方法 ====================
+    
+    def _check_vy_reversal(self, t: int, n: int, visibility: np.ndarray,
+                           v_y: np.ndarray, speed: np.ndarray) -> Optional[Dict]:
+        """主规则: Y方向速度反转检测"""
+        if t <= 0 or t + 1 >= n:
+            return None
+        if visibility[t-1] != 1 or visibility[t+1] != 1:
+            return None
+        
+        vy_before = v_y[t-1]
+        vy_after = v_y[t+1]
+        
+        # 检测反转
+        is_reversal = ((vy_before > self.vy_reversal_threshold and vy_after < -self.vy_reversal_threshold) or
+                       (vy_before < -self.vy_reversal_threshold and vy_after > self.vy_reversal_threshold))
+        
+        if is_reversal:
+            speed_after = speed[t+1]
+            if speed_after >= self.min_speed_at_hit:
+                return {
+                    'vy_before': float(vy_before),
+                    'vy_after': float(vy_after),
+                    'speed_after': float(speed_after),
+                    'reversal_magnitude': float(abs(vy_before - vy_after))
+                }
+        return None
+    
+    def _check_vx_reversal(self, t: int, n: int, visibility: np.ndarray,
+                           v_x: np.ndarray, speed: np.ndarray) -> Optional[Dict]:
+        """主规则: X方向速度反转检测"""
+        if t <= 0 or t + 1 >= n:
+            return None
+        if visibility[t-1] != 1 or visibility[t+1] != 1:
+            return None
+        
+        vx_before = v_x[t-1]
+        vx_after = v_x[t+1]
+        
+        is_reversal = ((vx_before > self.vy_reversal_threshold and vx_after < -self.vy_reversal_threshold) or
+                       (vx_before < -self.vy_reversal_threshold and vx_after > self.vy_reversal_threshold))
+        
+        if is_reversal:
+            speed_after = speed[t+1]
+            if speed_after >= self.min_speed_at_hit:
+                return {
+                    'vx_before': float(vx_before),
+                    'vx_after': float(vx_after),
+                    'speed_after': float(speed_after),
+                    'reversal_magnitude': float(abs(vx_before - vx_after))
+                }
+        return None
+    
+    def _check_acceleration_peak(self, t: int, n: int, visibility: np.ndarray,
+                                  acceleration: np.ndarray, speed: np.ndarray) -> Optional[Dict]:
+        """主规则: 加速度突变检测"""
+        if t <= 1 or t + 1 >= n:
+            return None
+        if visibility[t-1] != 1 or visibility[t] != 1 or visibility[t+1] != 1:
+            return None
+        
+        acc_before = acceleration[t-1]
+        acc_current = acceleration[t]
+        acc_after = acceleration[t+1]
+        
+        is_acc_peak = (acc_current > acc_before and 
+                       acc_current > acc_after and 
+                       acc_current > self.acc_threshold)
+        
+        if is_acc_peak:
+            return {
+                'acc_before': float(acc_before),
+                'acc_current': float(acc_current),
+                'acc_after': float(acc_after),
+                'speed': float(speed[t]),
+                'acc_ratio': float(acc_current / (max(acc_before, acc_after) + 1e-6))
+            }
+        return None
+    
+    def _check_visibility_drop(self, t: int, n: int, x: np.ndarray, y: np.ndarray,
+                               visibility: np.ndarray, speed: np.ndarray, v_y: np.ndarray,
+                               img_height: int, img_width: int, visible_count: int) -> Optional[Dict]:
+        """主规则: 可见性消失检测（落地或出界）"""
+        if t + 1 >= n:
+            return None
+        if visibility[t] != 1 or visibility[t+1] != 0:
+            return None
+        
+        recent_speed = np.mean(speed[max(0, t-3):t+1])
+        if recent_speed < self.min_speed_before_landing:
+            return None
+        
+        # 判断是否在边缘
+        is_edge = (x[t] < self.edge_margin or x[t] > img_width - self.edge_margin or
+                   y[t] < self.edge_margin or y[t] > img_height - self.edge_margin)
+        edge_distance = float(min(x[t], img_width - x[t], y[t], img_height - y[t]))
+        
+        features = {
+            'speed_before': float(recent_speed),
+            'v_y': float(v_y[t]),
+            'visible_before': int(visible_count),
+            'edge_distance': edge_distance
+        }
+        
+        if is_edge:
+            return {
+                'event_type': 'out_of_frame',
+                'rule': 'visibility_drop_edge',
+                'confidence': 0.50,
+                'features': features
+            }
+        else:
+            return {
+                'event_type': 'landing',
+                'rule': 'visibility_drop',
+                'confidence': 0.85,
+                'features': features
+            }
+    
+    def _check_speed_drop(self, t: int, n: int, visibility: np.ndarray,
+                          speed: np.ndarray) -> Optional[Dict]:
+        """主规则: 速度急剧下降检测"""
+        if t <= 0 or t + 2 >= n:
+            return None
+        
+        speed_before = speed[t-1]
+        speed_current = speed[t]
+        speed_after = speed[t+1] if visibility[t+1] == 1 else 0
+        
+        if speed_before < self.min_speed_before_landing:
+            return None
+        
+        speed_ratio = speed_current / (speed_before + 1e-6)
+        
+        if speed_ratio < self.speed_drop_ratio and speed_after <= self.max_speed_after_landing:
+            return {
+                'speed_ratio': float(speed_ratio),
+                'speed_before': float(speed_before),
+                'speed_current': float(speed_current),
+                'speed_after': float(speed_after)
+            }
+        return None
+    
+    # ==================== 辅助规则检测方法 ====================
+    
+    def _check_y_local_max(self, t: int, n: int, y: np.ndarray,
+                           visibility: np.ndarray) -> Optional[Dict]:
+        """辅助规则: Y坐标局部极大值（球最低点）"""
+        if t <= 0 or t + 1 >= n:
+            return None
+        if visibility[t-1] != 1 or visibility[t] != 1 or visibility[t+1] != 1:
+            return None
+        
+        is_y_maximum = (y[t] > y[t-1] and y[t] > y[t+1])
+        
+        if is_y_maximum:
+            height_diff = min(y[t] - y[t-1], y[t] - y[t+1])
+            if height_diff > self.min_height_diff:
+                return {
+                    'y_before': float(y[t-1]),
+                    'y_current': float(y[t]),
+                    'y_after': float(y[t+1]),
+                    'height_diff': float(height_diff)
+                }
+        return None
+    
+    def _check_speed_local_max(self, t: int, n: int, speed: np.ndarray,
+                               visibility: np.ndarray) -> Optional[Dict]:
+        """辅助规则: 速度局部极大值"""
+        if t <= 0 or t + 1 >= n:
+            return None
+        if visibility[t-1] != 1 or visibility[t] != 1 or visibility[t+1] != 1:
+            return None
+        
+        is_speed_maximum = (speed[t] > speed[t-1] and speed[t] > speed[t+1])
+        
+        if is_speed_maximum:
+            speed_diff = min(speed[t] - speed[t-1], speed[t] - speed[t+1])
+            if speed[t] > self.min_peak_speed and speed_diff > self.min_speed_diff:
+                return {
+                    'speed_before': float(speed[t-1]),
+                    'speed_current': float(speed[t]),
+                    'speed_after': float(speed[t+1]),
+                    'speed_diff': float(speed_diff)
+                }
+        return None
+    
+    def _check_trajectory_end(self, x: np.ndarray, y: np.ndarray,
+                              visibility: np.ndarray, speed: np.ndarray,
+                              candidates: List[Dict]) -> None:
+        """检查轨迹末尾（回合结束时的落地）"""
+        last_visible_idx = self._find_last_visible(visibility)
+        
+        if last_visible_idx is None or last_visible_idx <= self.min_visible_before:
+            return
+        
+        # 检查是否已有候选
+        if any(c['frame'] == last_visible_idx for c in candidates):
+            return
+        
+        recent_speed = np.mean(speed[max(0, last_visible_idx-3):last_visible_idx+1])
+        if recent_speed >= self.min_speed_before_landing * 0.5:
+            candidates.append({
+                'frame': last_visible_idx,
+                'x': float(x[last_visible_idx]),
+                'y': float(y[last_visible_idx]),
+                'event_type': 'landing',
+                'rule': 'trajectory_end',
+                'confidence': 0.70,
+                'all_rules': ['trajectory_end'],
+                'auxiliary_rules': [],
+                'features': {
+                    'speed': float(speed[last_visible_idx]),
+                    'recent_avg_speed': float(recent_speed)
+                }
+            })
     
     def _find_last_visible(self, visibility: np.ndarray) -> Optional[int]:
         """找到最后一个可见帧的索引"""

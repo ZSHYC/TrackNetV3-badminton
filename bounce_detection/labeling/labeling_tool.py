@@ -44,7 +44,8 @@ class LabelingTool:
                  csv_path: str,
                  video_path: Optional[str] = None,
                  label_path: Optional[str] = None,
-                 auto_detect: bool = True):
+                 auto_detect: bool = True,
+                 lazy_load_video: bool = False):
         """
         初始化标注工具
         
@@ -53,6 +54,7 @@ class LabelingTool:
             video_path: 视频文件路径 (可选，自动查找)
             label_path: 已有标注文件路径 (可选)
             auto_detect: 是否自动运行 Phase 1 检测
+            lazy_load_video: 是否延迟加载视频帧（节省内存，适用于长视频）
         """
         # 自动查找视频
         if video_path is None:
@@ -64,7 +66,8 @@ class LabelingTool:
         self.data_manager = LabelingDataManager(
             video_path=video_path,
             csv_path=csv_path,
-            label_path=label_path
+            label_path=label_path,
+            lazy_load_video=lazy_load_video
         )
         
         # 状态
@@ -593,6 +596,8 @@ def main():
                        help='Path to existing labels file (optional)')
     parser.add_argument('--no-detect', action='store_true',
                        help='Disable automatic Phase 1 detection')
+    parser.add_argument('--lazy-load', action='store_true',
+                       help='Enable lazy video loading (save memory for long videos)')
     
     args = parser.parse_args()
     
@@ -600,7 +605,8 @@ def main():
         csv_path=args.csv,
         video_path=args.video,
         label_path=args.labels,
-        auto_detect=not args.no_detect
+        auto_detect=not args.no_detect,
+        lazy_load_video=args.lazy_load
     )
     
     tool.run()

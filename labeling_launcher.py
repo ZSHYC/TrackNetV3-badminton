@@ -22,13 +22,14 @@ from bounce_detection.labeling import LabelingTool, LabelingDataManager
 from bounce_detection.labeling.data_manager import find_matching_video, LabelExporter
 
 
-def label_single_file(csv_path: str, video_path: str = None, labels_path: str = None):
+def label_single_file(csv_path: str, video_path: str = None, labels_path: str = None, lazy_load: bool = False):
     """标注单个文件"""
     tool = LabelingTool(
         csv_path=csv_path,
         video_path=video_path,
         label_path=labels_path,
-        auto_detect=True
+        auto_detect=True,
+        lazy_load_video=lazy_load
     )
     return tool.run()
 
@@ -237,12 +238,14 @@ Examples:
     parser.add_argument('--labels', type=str, default=None, help='Path to existing labels file')
     parser.add_argument('--output', type=str, default=None, help='Output path for export')
     parser.add_argument('--output_dir', type=str, default=None, help='Output directory for batch labeling')
+    parser.add_argument('--lazy-load', action='store_true',
+                       help='Enable lazy video loading (save memory for long videos)')
     
     args = parser.parse_args()
     
     if args.csv:
         # 单文件标注
-        label_single_file(args.csv, args.video, args.labels)
+        label_single_file(args.csv, args.video, args.labels, args.lazy_load)
     
     elif args.match_dir:
         # 批量标注
