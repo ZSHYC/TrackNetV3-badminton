@@ -258,8 +258,8 @@ class LabelingTool:
         # 获取当前帧数据
         frame_img = dm.get_frame(self.current_frame)
         ball_pos = dm.get_trajectory_at_frame(self.current_frame)
-        # 减小轨迹窗口大小，避免画面杂乱（前后各15帧）
-        traj_window = dm.get_trajectory_window(self.current_frame, window_size=15)
+        # 减小轨迹窗口大小，避免画面杂乱（前后各2帧）
+        traj_window = dm.get_trajectory_window(self.current_frame, window_size=2)
         
         # 获取当前事件
         current_event = dm.get_event_at_frame(self.current_frame)

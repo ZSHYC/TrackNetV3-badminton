@@ -45,6 +45,7 @@ class BounceCandidateGenerator:
                  # 通用参数
                  min_visible_before: int = 3,            # 事件前最少可见帧数
                  merge_window: int = 3,                  # 合并相邻候选的窗口大小
+                 future_check_window: int = 5,           # 落地后检查“复活”的窗口帧数
                  edge_margin: int = 20):                 # 边缘判定距离（像素）
         """
         Args:
@@ -59,6 +60,7 @@ class BounceCandidateGenerator:
             min_speed_diff: 速度极值最小差值
             min_visible_before: 事件前最少可见帧数
             merge_window: 合并相邻候选的窗口大小
+            future_check_window: 落地检查"复活"的窗口帧数
             edge_margin: 边缘判定距离（像素）
         """
         self.speed_drop_ratio = speed_drop_ratio
@@ -72,6 +74,7 @@ class BounceCandidateGenerator:
         self.min_speed_diff = min_speed_diff
         self.min_visible_before = min_visible_before
         self.merge_window = merge_window
+        self.future_check_window = future_check_window
         self.edge_margin = edge_margin
     
     def generate(self,
@@ -202,7 +205,8 @@ class BounceCandidateGenerator:
             
             # 主规则5: 速度急剧下降
             if primary_candidate is None:
-                result = self._check_speed_drop(t, n, visibility, speed)
+                # 显式传入 y 和 v_y 进行空间和方向约束
+                result = self._check_speed_drop(t, n, visibility, speed, y=y, v_y=v_y, img_height=img_height)
                 if result:
                     primary_candidate = {
                         'event_type': 'landing',
@@ -221,10 +225,14 @@ class BounceCandidateGenerator:
             if aux_result:
                 auxiliary_rules.append('y_local_max')
                 auxiliary_features['y_local_max'] = aux_result
-                # 仅对 hit 类事件增强置信度
-                if primary_candidate and primary_candidate['event_type'] == 'hit':
-                    confidence_boost += 0.05
-            
+                # 对 hit 和 landing 均增强置信度
+                # 对于 landing，这是非常强的特征（落地往往是Y坐标最大值/最低点）
+                if primary_candidate:
+                    if primary_candidate['event_type'] == 'landing':
+                        confidence_boost += 0.10  # 落地时Y极大值是非常强的证据
+                    elif primary_candidate['event_type'] == 'hit':
+                        confidence_boost += 0.05  # 击球也可能在低点（挑球）
+
             # 辅助规则2: 速度局部极大值
             aux_result = self._check_speed_local_max(t, n, speed, visibility)
             if aux_result:
@@ -376,6 +384,22 @@ class BounceCandidateGenerator:
         recent_speed = np.mean(speed[max(0, t-3):t+1])
         if recent_speed < self.min_speed_before_landing:
             return None
+            
+        # 物理约束：落地必须是向下运动 (v_y > 0)
+        # 如果 v_y < 0 (向上运动) 但消失了，可能是飞出画面上方或被遮挡，不应判为落地
+        if v_y[t] < -1.0: # 给一点宽容度防止噪声
+            # 向上消失，更有可能是 out_of_frame (上方) 或 漏检
+            # 这里保守起见，不作为 landing 返回，或者作为 out_of_frame
+            return {
+                'event_type': 'out_of_frame',
+                'rule': 'visibility_drop_upward', # 新增规则类型标识
+                'confidence': 0.60,
+                'features': {
+                    'speed_before': float(recent_speed),
+                    'v_y': float(v_y[t]),
+                    'visible_before': int(visible_count)
+                }
+            }
         
         # 判断是否在边缘
         is_edge = (x[t] < self.edge_margin or x[t] > img_width - self.edge_margin or
@@ -396,16 +420,29 @@ class BounceCandidateGenerator:
                 'confidence': 0.50,
                 'features': features
             }
-        else:
+        
+        # 新增规则：最小落地高度约束
+        # 如果消失点在画面顶部 15% 区域，这绝不可能是落地，而是高空球出界/丢失
+        if y[t] < img_height * 0.15:
             return {
-                'event_type': 'landing',
-                'rule': 'visibility_drop',
-                'confidence': 0.85,
+                'event_type': 'out_of_frame',
+                'rule': 'visibility_drop_high_altitude', # 新增规则：高空丢失
+                'confidence': 0.60,
                 'features': features
             }
+        
+        return {
+            'event_type': 'landing',
+            'rule': 'visibility_drop',
+            'confidence': 0.85,
+            'features': features
+        }
     
     def _check_speed_drop(self, t: int, n: int, visibility: np.ndarray,
-                          speed: np.ndarray) -> Optional[Dict]:
+                          speed: np.ndarray,
+                          y: Optional[np.ndarray] = None, 
+                          v_y: Optional[np.ndarray] = None,
+                          img_height: int = 288) -> Optional[Dict]:
         """主规则: 速度急剧下降检测"""
         if t <= 0 or t + 2 >= n:
             return None
@@ -416,10 +453,33 @@ class BounceCandidateGenerator:
         
         if speed_before < self.min_speed_before_landing:
             return None
+            
+        # 改进 1: 空间高度约束 (Apex Protection)
+        # 如果 Y 坐标在画面上部 (前 30%)，这极有可能是高远球的最高点，而不是落地
+        # 落地应当发生在地面（通常在画面下方）
+        if y is not None:
+            if y[t] < img_height * 0.30:
+                return None
+
+        # 改进 2: 垂直方向约束
+        # 落地必须不处于上升状态。允许极小的负值容错，但不能明显向上。
+        if v_y is not None:
+            if v_y[t] < -2.0: 
+                return None
         
         speed_ratio = speed_current / (speed_before + 1e-6)
         
         if speed_ratio < self.speed_drop_ratio and speed_after <= self.max_speed_after_landing:
+            # 新增规则：Future Activity Check (检查是否有"复活")
+            # 真正的落地后，球应该保持静止。如果在未来几帧内速度又变大了，说明这帧只是暂时的减速（如网前晃动）
+            check_end = min(n, t + self.future_check_window + 1)
+            if check_end > t + 1:
+                future_max_speed = np.max(speed[t+1 : check_end] * visibility[t+1 : check_end])
+                # 如果未来几帧有任何一帧速度超过击球阈值或落地前速度的一半，则认为它复活了
+                resurrection_threshold = 10.0 # 像素/帧，约为慢速球的速度
+                if future_max_speed > resurrection_threshold:
+                    return None
+
             return {
                 'speed_ratio': float(speed_ratio),
                 'speed_before': float(speed_before),
