@@ -224,10 +224,8 @@ Hit (击球点) 检测策略:
 ├── vy_reversal: Y方向速度反转 + 速度保持较高
 ├── vx_reversal: X方向速度反转 + 速度保持较高
 ├── acceleration_peak: 加速度突变 (击球瞬间)
+├── y_local_max: Y坐标局部极大值 (球最低点，低手击球)
 └── speed_local_max: 速度局部极大值 (击球瞬间)
-
-Landing (落地点) 补充策略:
-└── y_local_max: Y坐标局部极大值 (球最低点，接近地面)
 
 Out-of-Frame (出画面) 检测策略:
 └── visibility_drop_edge: 在画面边缘消失
@@ -424,12 +422,12 @@ is_edge = (x < 20 or x > img_width - 20 or
 - 当前帧Y坐标大于前后帧: `y[t] > y[t-1] and y[t] > y[t+1]`
 - 高度差超过阈值: `min(y[t] - y[t-1], y[t] - y[t+1]) > 5`
 
-**物理意义**: 图像坐标系中Y向下为正，Y坐标最大表示球位置最低（接近地面），可能是落地点。
+**物理意义**: 图像坐标系中Y向下为正，Y坐标最大表示球位置最低，可能是低手击球的位置。
 
 **输出**:
 ```python
 {
-    'event_type': 'landing',
+    'event_type': 'hit',
     'rule': 'y_local_max',
     'confidence': 0.60,
     'features': {

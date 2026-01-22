@@ -200,7 +200,7 @@ class BounceNet:
 | `vy_reversal` | hit | 0.85 | Y方向速度反转 |
 | `vx_reversal` | hit | 0.80 | X方向速度反转 |
 | `acceleration_peak` | hit | 0.75 | 加速度突变 |
-| `y_local_max` | landing | 0.60 | Y坐标局部极大值（最低点） |
+| `y_local_max` | hit | 0.60 | Y坐标局部极大值（最低点） |
 | `speed_local_max` | hit | 0.60 | 速度局部极大值 |
 | `visibility_drop` | landing | 0.85 | 场内可见性消失 |
 | `speed_drop` | landing | 0.75 | 速度骤降 |

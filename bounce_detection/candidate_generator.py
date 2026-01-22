@@ -16,10 +16,15 @@ class BounceCandidateGenerator:
     羽毛球事件检测候选生成器
     
     检测两种事件:
-    - 落地点 (landing): 球落地后停止/消失
-      特征: 速度急剧下降 → 接近静止或消失
-    - 击球点 (hit): 球被球拍击中
-      特征: 速度方向突然反转，但速度大小保持较高
+        Landing落点特征：
+        ├── 速度下降 → 接近静止
+        ├── 之后消失或不再运动
+        └── 回合结束
+
+        Hit 击球点特征：
+        ├── 速度方向反转
+        ├── 之后速度保持较高（继续飞行）
+        └── 加速度突变
     
     注意: 不依赖于画面位置，因为落点可能出现在场地任何位置
     """
@@ -288,8 +293,8 @@ class BounceCandidateGenerator:
                             continue
             
             # 规则6: Y坐标局部极大值 (球到达最低点)
-            # 图像坐标系: Y向下为正，所以 Y 极大值 = 球的最低点（接近地面）
-            # 这可能是落地点的候选
+            # 图像坐标系: Y向下为正，所以 Y 极大值 = 球的最低点
+            # 这可能是低手击球的位置
             if t > 0 and t + 1 < n:
                 if visibility[t-1] == 1 and visibility[t] == 1 and visibility[t+1] == 1:
                     is_y_maximum = (y[t] > y[t-1] and y[t] > y[t+1])
@@ -305,7 +310,7 @@ class BounceCandidateGenerator:
                                 'frame': t,
                                 'x': float(x[t]),
                                 'y': float(y[t]),
-                                'event_type': 'landing',
+                                'event_type': 'hit',
                                 'rule': 'y_local_max',
                                 'confidence': 0.60,
                                 'features': {
@@ -398,7 +403,7 @@ class BounceCandidateGenerator:
             'visibility_drop': 4,       # 可见性消失
             'visibility_drop_edge': 3,  # 边缘消失
             'speed_drop': 3,            # 速度骤降
-            'y_local_max': 3,         # Y坐标局部极大值 (球最低点，落地候选)
+            'y_local_max': 3,         # Y坐标局部极大值 (球最低点，低手击球)
             'trajectory_end': 2,        # 轨迹结束
             'speed_local_max': 3,      # 速度局部极大值
             'direction_change': 0
