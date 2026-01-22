@@ -85,16 +85,12 @@ class FrameVisualizer:
     
     在视频帧上绘制:
     - 球的位置（带动态效果）
-    - 轨迹线（渐变透明度）
-    - 事件标记（清晰图标）
+    - 轨迹线（渐变效果）
+    - 事件标记（简洁清晰）
     """
     
     def __init__(self, ax: plt.Axes):
         self.ax = ax
-        self.frame_image = None
-        self.trajectory_line = None
-        self.ball_marker = None
-        self.event_markers = []
         
     def draw_frame(self, 
                    frame: Optional[np.ndarray],
@@ -105,151 +101,158 @@ class FrameVisualizer:
                    current_event: Optional[Dict] = None):
         """
         绘制帧
-        
-        Args:
-            frame: 视频帧图像 (RGB)
-            frame_idx: 帧索引
-            ball_pos: (x, y, visibility) 当前帧球的位置
-            trajectory: (x_array, y_array, vis_array) 轨迹窗口
-            events: 当前窗口内的事件列表
-            current_event: 当前帧的事件（如果有）
         """
         self.ax.clear()
         
         # 1. 绘制视频帧或空白背景
         if frame is not None:
             self.ax.imshow(frame)
-            # 添加半透明叠加层使标记更清晰
-            overlay_alpha = 0.1
         else:
-            # 没有视频帧时使用美观的深色背景
             self.ax.set_xlim(0, 512)
-            self.ax.set_ylim(288, 0)  # Y轴翻转
+            self.ax.set_ylim(288, 0)
             self.ax.set_facecolor(THEME['bg_dark'])
-            # 添加网格
-            self.ax.grid(True, alpha=0.1, color=THEME['grid'], linestyle='--')
-            overlay_alpha = 0
+            self.ax.grid(True, alpha=0.1, color=THEME['grid'], linestyle='-', linewidth=0.5)
         
-        # 2. 绘制轨迹（带渐变效果）
+        # 2. 绘制轨迹（渐变效果，从淡到浓）
         x_traj, y_traj, vis_traj = trajectory
         if len(x_traj) > 0:
             visible = vis_traj == 1
             x_vis, y_vis = x_traj[visible], y_traj[visible]
             
             if len(x_vis) > 1:
-                # 轨迹线 - 使用渐变颜色
-                for i in range(len(x_vis) - 1):
-                    alpha = 0.3 + 0.5 * (i / len(x_vis))  # 从淡到浓
-                    self.ax.plot([x_vis[i], x_vis[i+1]], [y_vis[i], y_vis[i+1]], 
-                                color='#00FF88', alpha=alpha, linewidth=2)
+                n_points = len(x_vis)
+                # 渐变轨迹点 - 从小到大，从淡到浓
+                sizes = np.linspace(8, 35, n_points)
+                alphas = np.linspace(0.2, 0.7, n_points)
                 
-                # 轨迹点 - 从小到大
-                sizes = np.linspace(10, 40, len(x_vis))
-                alphas = np.linspace(0.3, 0.8, len(x_vis))
-                for i, (x, y, s, a) in enumerate(zip(x_vis, y_vis, sizes, alphas)):
-                    self.ax.scatter(x, y, c='#00FF88', s=s, alpha=a, zorder=3, edgecolors='none')
+                for i in range(n_points):
+                    self.ax.scatter(x_vis[i], y_vis[i], 
+                                   c='#00FF88', s=sizes[i], alpha=alphas[i], 
+                                   zorder=3, edgecolors='none')
+                
+                # 轨迹连线（细线，半透明）
+                self.ax.plot(x_vis, y_vis, color='#00FF88', alpha=0.4, 
+                            linewidth=1.5, linestyle='-', zorder=2)
         
-        # 3. 绘制事件标记
+        # 3. 绘制事件标记（只显示当前帧附近的，不显示标签避免遮挡）
+        # 只显示当前帧的事件，其他事件只用小标记
         for event in events:
             event_type = event.get('event_type', 'other')
             color = EVENT_COLORS.get(event_type, EVENT_COLORS['other'])
             dark_color = EVENT_COLORS_DARK.get(event_type, color)
             marker = EVENT_MARKERS.get(event_type, 's')
             
-            # 已确认的事件用实心，未确认的用空心
             is_confirmed = event.get('confirmed', False)
-            facecolor = color if is_confirmed else 'none'
-            edge_width = 2 if is_confirmed else 3
+            is_current = (event['frame'] == frame_idx)
             
-            # 绘制事件标记
-            self.ax.scatter(event['x'], event['y'], 
-                           c=facecolor, edgecolors=dark_color,
-                           s=250, marker=marker, linewidths=edge_width, zorder=5)
-            
-            # 添加光晕效果
-            if is_confirmed:
+            if is_current:
+                # 当前帧的事件 - 大且醒目
+                facecolor = color if is_confirmed else 'none'
                 self.ax.scatter(event['x'], event['y'], 
-                               c=color, s=400, alpha=0.2, marker='o', zorder=4)
-            
-            # Label with frame number
-            label_text = f"F{event['frame']}"
-            self.ax.annotate(label_text, 
-                            (event['x'], event['y']),
-                            textcoords="offset points",
-                            xytext=(12, -12),
-                            fontsize=9,
-                            fontweight='bold',
-                            color=color,
-                            bbox=dict(boxstyle='round,pad=0.2', 
-                                     facecolor=THEME['bg_dark'], 
-                                     edgecolor=color, alpha=0.8))
+                               c=facecolor, edgecolors=dark_color,
+                               s=300, marker=marker, linewidths=3, zorder=6)
+                if is_confirmed:
+                    self.ax.scatter(event['x'], event['y'], 
+                                   c=color, s=450, alpha=0.2, marker='o', zorder=5)
+            else:
+                # 其他事件 - 小标记，无标签
+                facecolor = color if is_confirmed else 'none'
+                self.ax.scatter(event['x'], event['y'], 
+                               c=facecolor, edgecolors=dark_color,
+                               s=100, marker=marker, linewidths=1.5, zorder=4, alpha=0.7)
         
-        # 4. 绘制当前帧的球（突出显示）
+        # 4. 绘制当前帧的球
         x, y, vis = ball_pos
         if vis == 1:
             if current_event:
-                # 当前帧有事件 - 使用事件颜色
                 event_type = current_event.get('event_type', 'other')
                 color = EVENT_COLORS.get(event_type, '#FFFF00')
-                
-                # 多层光晕效果
-                self.ax.scatter(x, y, c=color, s=600, alpha=0.15, marker='o', zorder=8)
-                self.ax.scatter(x, y, c=color, s=400, alpha=0.25, marker='o', zorder=9)
+                self.ax.scatter(x, y, c=color, s=400, alpha=0.2, marker='o', zorder=8)
                 self.ax.scatter(x, y, c='#FFFF00', edgecolors=color, 
-                               s=200, marker='o', linewidths=3, zorder=10)
+                               s=150, marker='o', linewidths=3, zorder=10)
             else:
-                # 普通帧 - 黄色球
-                self.ax.scatter(x, y, c='#FFFF00', s=400, alpha=0.2, marker='o', zorder=8)
+                self.ax.scatter(x, y, c='#FFFF00', s=250, alpha=0.2, marker='o', zorder=8)
                 self.ax.scatter(x, y, c='#FFFF00', edgecolors='#FF8C00', 
-                               s=150, marker='o', linewidths=2, zorder=10)
+                               s=100, marker='o', linewidths=2, zorder=10)
         
-        # 5. Title bar
+        # 5. 标题栏
         title_parts = [f"Frame {frame_idx}"]
+        if vis == 1:
+            title_parts.append(f"({x:.0f}, {y:.0f})")
         if current_event:
             event_type = current_event.get('event_type', 'unknown')
             type_name = EVENT_NAMES.get(event_type, event_type)
-            symbol = EVENT_SYMBOLS.get(event_type, '?')
-            confirmed = '[OK]' if current_event.get('confirmed', False) else '[?]'
-            title_parts.append(f"{symbol} {type_name} {confirmed}")
+            confirmed = '✓' if current_event.get('confirmed', False) else '?'
+            title_parts.append(f"{type_name} [{confirmed}]")
         
         self.ax.set_title(' | '.join(title_parts), 
-                         fontsize=13, fontweight='bold',
-                         color=THEME['text_primary'],
-                         pad=10)
+                         fontsize=11, fontweight='bold',
+                         color=THEME['text_primary'], pad=6)
         
-        # 移除坐标轴刻度，保持简洁
         self.ax.set_xticks([])
         self.ax.set_yticks([])
         
-        # 添加边框
         for spine in self.ax.spines.values():
             spine.set_color(THEME['border'])
-            spine.set_linewidth(2)
+            spine.set_linewidth(1.5)
         
-        # 确保 Y 轴翻转（图像坐标系）
         if self.ax.get_ylim()[0] < self.ax.get_ylim()[1]:
             self.ax.invert_yaxis()
 
 
 class TrajectoryPlot:
     """
-    轨迹时序图
+    轨迹时序图（4个子图）
     
-    显示 X/Y 坐标和速度随时间的变化
-    使用现代化深色主题
+    显示 X坐标、Y坐标、速度、加速度 随时间的变化
+    使用现代化深色主题，支持事件标记和当前帧高亮
     """
     
-    def __init__(self, ax_y: plt.Axes, ax_speed: plt.Axes):
+    def __init__(self, ax_x: plt.Axes, ax_y: plt.Axes, 
+                 ax_speed: plt.Axes, ax_acc: plt.Axes):
+        self.ax_x = ax_x
         self.ax_y = ax_y
         self.ax_speed = ax_speed
+        self.ax_acc = ax_acc
         self._setup_style()
     
     def _setup_style(self):
         """设置图表样式"""
-        for ax in [self.ax_y, self.ax_speed]:
+        for ax in [self.ax_x, self.ax_y, self.ax_speed, self.ax_acc]:
             ax.set_facecolor(THEME['bg_panel'])
             for spine in ax.spines.values():
                 spine.set_color(THEME['border'])
+    
+    def _draw_current_frame_highlight(self, ax: plt.Axes, current_frame: int, 
+                                      frames: np.ndarray):
+        """绘制当前帧高亮区域"""
+        if len(frames) > 0:
+            frame_range = frames[-1] - frames[0]
+            if frame_range > 0:
+                highlight_width = max(5, frame_range * 0.015)
+                ax.axvspan(current_frame - highlight_width, 
+                          current_frame + highlight_width,
+                          facecolor=THEME['bg_highlight'], alpha=0.4)
+    
+    def _draw_event_markers(self, ax: plt.Axes, events: List[Dict], 
+                            data_y: Optional[np.ndarray] = None,
+                            frames: Optional[np.ndarray] = None):
+        """绘制事件标记（垂直线 + 可选的数据点）"""
+        for event in events:
+            event_type = event.get('event_type', 'other')
+            color = EVENT_COLORS.get(event_type, 'gray')
+            
+            # 垂直虚线
+            ax.axvline(x=event['frame'], color=color, 
+                      linestyle='--', alpha=0.5, linewidth=1.2)
+            
+            # 如果提供了数据，在数据线上标记点
+            if data_y is not None and frames is not None:
+                idx = np.where(frames == event['frame'])[0]
+                if len(idx) > 0:
+                    ax.scatter(event['frame'], data_y[idx[0]], 
+                              c=color, s=80, marker='*', zorder=5,
+                              edgecolors='white', linewidths=0.5)
     
     def draw(self,
              frames: np.ndarray,
@@ -257,92 +260,131 @@ class TrajectoryPlot:
              y: np.ndarray,
              visibility: np.ndarray,
              speed: np.ndarray,
+             acceleration: np.ndarray,
              current_frame: int,
              events: List[Dict]):
         """
-        绘制轨迹时序图
+        绘制4个轨迹时序图
         """
-        self.ax_y.clear()
-        self.ax_speed.clear()
+        # 清理并重置样式
+        for ax in [self.ax_x, self.ax_y, self.ax_speed, self.ax_acc]:
+            ax.clear()
         self._setup_style()
         
         visible = visibility == 1
         
-        # ========== Y 坐标图 ==========
-        # 背景区域高亮当前帧附近
-        if len(frames) > 0:
-            frame_range = frames[-1] - frames[0]
-            if frame_range > 0:
-                highlight_width = max(10, frame_range * 0.02)
-                self.ax_y.axvspan(current_frame - highlight_width, 
-                                 current_frame + highlight_width,
-                                 facecolor=THEME['bg_highlight'], alpha=0.3)
+        # ========== X 坐标图 ==========
+        self._draw_current_frame_highlight(self.ax_x, current_frame, frames)
         
-        # Y 坐标线
+        if np.any(visible):
+            self.ax_x.plot(frames[visible], x[visible], 
+                          color='#E74C3C', linewidth=1.8, alpha=0.9)
+            self.ax_x.fill_between(frames[visible], x[visible], 
+                                  alpha=0.1, color='#E74C3C')
+        
+        # 当前帧竖线
+        self.ax_x.axvline(x=current_frame, color='#FFFFFF', linestyle='-', 
+                         linewidth=2, alpha=0.8, zorder=10)
+        
+        self._draw_event_markers(self.ax_x, events, x, frames)
+        
+        self.ax_x.set_ylabel('X', fontsize=9, color=THEME['text_primary'])
+        self.ax_x.set_title('X Coordinate', fontsize=10, fontweight='bold',
+                           color=THEME['text_primary'], pad=5)
+        self.ax_x.grid(True, alpha=0.2, color=THEME['grid'], linestyle='--')
+        self.ax_x.tick_params(colors=THEME['text_secondary'], labelsize=7)
+        self.ax_x.set_xticklabels([])  # 隐藏X轴标签（与下面的图共享）
+        
+        # ========== Y 坐标图 ==========
+        self._draw_current_frame_highlight(self.ax_y, current_frame, frames)
+        
         if np.any(visible):
             self.ax_y.plot(frames[visible], y[visible], 
-                          color='#5DADE2', linewidth=2, label='Y坐标', alpha=0.9)
+                          color='#5DADE2', linewidth=1.8, alpha=0.9)
             self.ax_y.fill_between(frames[visible], y[visible], 
                                   alpha=0.1, color='#5DADE2')
         
-        # 当前帧标记
-        self.ax_y.axvline(x=current_frame, color='#E74C3C', linestyle='-', 
-                         linewidth=2.5, label='当前帧', zorder=10)
+        self.ax_y.axvline(x=current_frame, color='#FFFFFF', linestyle='-', 
+                         linewidth=2, alpha=0.8, zorder=10)
         
-        # 绘制事件标记
+        # 绘制事件标记（Y图上显示Y位置）
         for event in events:
             event_type = event.get('event_type', 'other')
             color = EVENT_COLORS.get(event_type, 'gray')
-            symbol = EVENT_SYMBOLS.get(event_type, '?')
-            
-            # 垂直线
             self.ax_y.axvline(x=event['frame'], color=color, 
-                             linestyle='--', alpha=0.6, linewidth=1.5)
-            
-            # 事件点
+                             linestyle='--', alpha=0.5, linewidth=1.2)
             self.ax_y.scatter(event['frame'], event['y'], 
-                             c=color, s=120, marker='*', zorder=5,
+                             c=color, s=80, marker='*', zorder=5,
                              edgecolors='white', linewidths=0.5)
         
-        self.ax_y.set_ylabel('Y', fontsize=10, color=THEME['text_primary'])
-        self.ax_y.set_title('Y Coordinate', fontsize=11, fontweight='bold',
-                           color=THEME['text_primary'], pad=8)
-        self.ax_y.invert_yaxis()
+        self.ax_y.set_ylabel('Y', fontsize=9, color=THEME['text_primary'])
+        self.ax_y.set_title('Y Coordinate', fontsize=10, fontweight='bold',
+                           color=THEME['text_primary'], pad=5)
+        self.ax_y.invert_yaxis()  # Y轴翻转（图像坐标系）
         self.ax_y.grid(True, alpha=0.2, color=THEME['grid'], linestyle='--')
-        self.ax_y.tick_params(colors=THEME['text_secondary'], labelsize=8)
+        self.ax_y.tick_params(colors=THEME['text_secondary'], labelsize=7)
+        self.ax_y.set_xticklabels([])
         
         # ========== 速度图 ==========
-        # 背景区域高亮
-        if len(frames) > 0:
-            frame_range = frames[-1] - frames[0]
-            if frame_range > 0:
-                highlight_width = max(10, frame_range * 0.02)
-                self.ax_speed.axvspan(current_frame - highlight_width, 
-                                     current_frame + highlight_width,
-                                     facecolor=THEME['bg_highlight'], alpha=0.3)
+        self._draw_current_frame_highlight(self.ax_speed, current_frame, frames)
         
         # 速度线和填充
-        self.ax_speed.plot(frames, speed, color='#2ECC71', linewidth=2, 
-                          label='速度', alpha=0.9)
-        self.ax_speed.fill_between(frames, 0, speed, alpha=0.2, color='#2ECC71')
+        self.ax_speed.plot(frames, speed, color='#2ECC71', linewidth=1.8, alpha=0.9)
+        self.ax_speed.fill_between(frames, 0, speed, alpha=0.15, color='#2ECC71')
         
-        # 当前帧标记
-        self.ax_speed.axvline(x=current_frame, color='#E74C3C', linestyle='-', 
-                             linewidth=2.5, label='当前帧', zorder=10)
+        self.ax_speed.axvline(x=current_frame, color='#FFFFFF', linestyle='-', 
+                             linewidth=2, alpha=0.8, zorder=10)
         
-        # 绘制事件标记
-        for event in events:
-            event_type = event.get('event_type', 'other')
-            color = EVENT_COLORS.get(event_type, 'gray')
-            self.ax_speed.axvline(x=event['frame'], color=color, 
-                                 linestyle='--', alpha=0.6, linewidth=1.5)
+        self._draw_event_markers(self.ax_speed, events, speed, frames)
         
-        self.ax_speed.set_xlabel('Frame', fontsize=10, color=THEME['text_primary'])
-        self.ax_speed.set_ylabel('Speed', fontsize=10, color=THEME['text_primary'])
-        self.ax_speed.set_title('Speed', fontsize=11, fontweight='bold',
-                               color=THEME['text_primary'], pad=8)
+        self.ax_speed.set_xlabel('Frame', fontsize=9, color=THEME['text_primary'])
+        self.ax_speed.set_ylabel('Speed', fontsize=9, color=THEME['text_primary'])
+        self.ax_speed.set_title('Speed (px/frame)', fontsize=10, fontweight='bold',
+                               color=THEME['text_primary'], pad=5)
         self.ax_speed.grid(True, alpha=0.2, color=THEME['grid'], linestyle='--')
-        self.ax_speed.tick_params(colors=THEME['text_secondary'], labelsize=8)
+        self.ax_speed.tick_params(colors=THEME['text_secondary'], labelsize=7)
+        self.ax_speed.set_ylim(bottom=0)  # 速度从0开始
+        
+        # ========== 加速度图 ==========
+        self._draw_current_frame_highlight(self.ax_acc, current_frame, frames)
+        
+        # 处理加速度数据
+        acc_safe = np.nan_to_num(acceleration, nan=0, posinf=0, neginf=0)
+        
+        # 使用百分位数确定合理的显示范围（去除极端值）
+        if len(acc_safe) > 0 and np.any(acc_safe != 0):
+            p5, p95 = np.percentile(acc_safe, [5, 95])
+            # 确保范围有意义
+            acc_range = max(abs(p5), abs(p95), 1.0)
+            # 稍微扩展范围
+            y_limit = acc_range * 1.3
+        else:
+            y_limit = 10.0
+        
+        # 绘制加速度曲线
+        self.ax_acc.plot(frames, acc_safe, color='#F39C12', linewidth=1.8, alpha=0.9)
+        self.ax_acc.fill_between(frames, 0, acc_safe, 
+                                where=(acc_safe >= 0), alpha=0.15, color='#F39C12')
+        self.ax_acc.fill_between(frames, 0, acc_safe, 
+                                where=(acc_safe < 0), alpha=0.15, color='#9B59B6')
+        
+        # 零线
+        self.ax_acc.axhline(y=0, color=THEME['text_secondary'], linestyle='-', 
+                           linewidth=0.8, alpha=0.5)
+        
+        self.ax_acc.axvline(x=current_frame, color='#FFFFFF', linestyle='-', 
+                           linewidth=2, alpha=0.8, zorder=10)
+        
+        self._draw_event_markers(self.ax_acc, events, acc_safe, frames)
+        
+        self.ax_acc.set_xlabel('Frame', fontsize=9, color=THEME['text_primary'])
+        self.ax_acc.set_ylabel('Acc', fontsize=9, color=THEME['text_primary'])
+        self.ax_acc.set_title('Acceleration (px/frame²)', fontsize=10, fontweight='bold',
+                             color=THEME['text_primary'], pad=5)
+        self.ax_acc.grid(True, alpha=0.2, color=THEME['grid'], linestyle='--')
+        self.ax_acc.tick_params(colors=THEME['text_secondary'], labelsize=7)
+        # 动态设置Y轴范围
+        self.ax_acc.set_ylim(-y_limit, y_limit)
 
 
 class InfoPanel:

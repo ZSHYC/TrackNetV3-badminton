@@ -125,15 +125,16 @@ class LabelingTool:
         plt.style.use('dark_background')
         
         # 创建图形
-        self.fig = plt.figure(figsize=(18, 11), facecolor=THEME['bg_dark'])
+        self.fig = plt.figure(figsize=(20, 12), facecolor=THEME['bg_dark'])
         self.fig.canvas.manager.set_window_title('🏸 羽毛球落点检测标注工具')
         
-        # 布局: 2行4列
-        # [视频帧 (大)      ] [信息面板] [事件列表] [快捷键]
-        # [Y坐标图] [速度图 ] [按钮区域            ]
+        # 优化布局: 3行布局
+        # Row 0: [视频帧 (大)] [信息面板] [事件列表] [快捷键]
+        # Row 1: [X坐标图    ] [Y坐标图 ]
+        # Row 2: [速度图     ] [加速度图] [按钮区域]
         
-        gs = self.fig.add_gridspec(2, 4, height_ratios=[2.5, 1], 
-                                   width_ratios=[3, 1.2, 1.2, 1.2],
+        gs = self.fig.add_gridspec(3, 4, height_ratios=[2.5, 0.8, 0.8], 
+                                   width_ratios=[2.5, 1.5, 1.2, 1.2],
                                    hspace=0.25, wspace=0.15,
                                    left=0.03, right=0.97, top=0.95, bottom=0.05)
         
@@ -142,9 +143,13 @@ class LabelingTool:
         self.axes['info'] = self.fig.add_subplot(gs[0, 1])
         self.axes['events'] = self.fig.add_subplot(gs[0, 2])
         self.axes['shortcuts'] = self.fig.add_subplot(gs[0, 3])
-        self.axes['y_plot'] = self.fig.add_subplot(gs[1, 0])
-        self.axes['speed_plot'] = self.fig.add_subplot(gs[1, 1])
-        self.axes['buttons'] = self.fig.add_subplot(gs[1, 2:])
+        
+        # 新增：4个时序图
+        self.axes['x_plot'] = self.fig.add_subplot(gs[1, 0:2])
+        self.axes['y_plot'] = self.fig.add_subplot(gs[1, 2:4])
+        self.axes['speed_plot'] = self.fig.add_subplot(gs[2, 0:2])
+        self.axes['acc_plot'] = self.fig.add_subplot(gs[2, 2])
+        self.axes['buttons'] = self.fig.add_subplot(gs[2, 3])
         
         # 设置所有面板的背景色
         for name, ax in self.axes.items():
@@ -153,7 +158,8 @@ class LabelingTool:
         # 初始化可视化组件
         self.visualizers['frame'] = FrameVisualizer(self.axes['frame'])
         self.visualizers['trajectory'] = TrajectoryPlot(
-            self.axes['y_plot'], self.axes['speed_plot']
+            self.axes['x_plot'], self.axes['y_plot'], 
+            self.axes['speed_plot'], self.axes['acc_plot']
         )
         self.visualizers['info'] = InfoPanel(self.axes['info'])
         self.visualizers['events'] = EventListPanel(self.axes['events'])
@@ -180,29 +186,32 @@ class LabelingTool:
         self._update_display()
     
     def _setup_buttons(self):
-        """Setup buttons with modern style"""
+        """Setup buttons with modern style - 紧凑布局"""
         ax = self.axes['buttons']
         ax.axis('off')
         ax.set_facecolor(THEME['bg_panel'])
         
-        # Button config: (x, y, w, h, label, callback, color)
+        # 紧凑的按钮配置: (x, y, w, h, label, callback, color)
+        # 4行3列布局
         button_specs = [
             # Row 1 - Navigation
-            (0.02, 0.72, 0.22, 0.22, '< Prev\n(<- A)', self._prev_frame, '#3498DB'),
-            (0.26, 0.72, 0.22, 0.22, 'Next >\n(-> D)', self._next_frame, '#3498DB'),
-            (0.50, 0.72, 0.22, 0.22, '^ PrevEvt\n(Up W)', self._prev_event, '#9B59B6'),
-            (0.74, 0.72, 0.22, 0.22, 'NextEvt v\n(Down)', self._next_event, '#9B59B6'),
+            (0.02, 0.76, 0.30, 0.22, '< Prev', self._prev_frame, '#3498DB'),
+            (0.35, 0.76, 0.30, 0.22, 'Next >', self._next_frame, '#3498DB'),
+            (0.68, 0.76, 0.30, 0.22, 'PrevEvt', self._prev_event, '#9B59B6'),
             
-            # Row 2 - Edit
-            (0.02, 0.40, 0.22, 0.22, 'Confirm\n(Y)', lambda e: self._confirm_event(), '#27AE60'),
-            (0.26, 0.40, 0.22, 0.22, 'Delete\n(Del)', lambda e: self._delete_event(), '#E74C3C'),
-            (0.50, 0.40, 0.22, 0.22, '* Land\n(L)', lambda e: self._set_event_type('landing'), '#FF6B6B'),
-            (0.74, 0.40, 0.22, 0.22, '+ Hit\n(H)', lambda e: self._set_event_type('hit'), '#4ECDC4'),
+            # Row 2
+            (0.02, 0.52, 0.30, 0.22, 'NextEvt', self._next_event, '#9B59B6'),
+            (0.35, 0.52, 0.30, 0.22, 'Confirm', lambda e: self._confirm_event(), '#27AE60'),
+            (0.68, 0.52, 0.30, 0.22, 'Delete', lambda e: self._delete_event(), '#E74C3C'),
             
-            # Row 3 - System
-            (0.02, 0.08, 0.30, 0.22, 'Save (Ctrl+S)', lambda e: self._save(), '#F39C12'),
-            (0.34, 0.08, 0.30, 0.22, 'Quit (Q)', lambda e: self._quit(), '#95A5A6'),
-            (0.66, 0.08, 0.30, 0.22, 'Add Event (N)', lambda e: self._add_event(), '#1ABC9C'),
+            # Row 3 - Event types
+            (0.02, 0.28, 0.30, 0.22, '* Land', lambda e: self._set_event_type('landing'), '#FF6B6B'),
+            (0.35, 0.28, 0.30, 0.22, '+ Hit', lambda e: self._set_event_type('hit'), '#4ECDC4'),
+            (0.68, 0.28, 0.30, 0.22, 'Add New', lambda e: self._add_event(), '#1ABC9C'),
+            
+            # Row 4 - System
+            (0.02, 0.04, 0.47, 0.22, 'Save (S)', lambda e: self._save(), '#F39C12'),
+            (0.51, 0.04, 0.47, 0.22, 'Quit (Q)', lambda e: self._quit(), '#95A5A6'),
         ]
         
         self.buttons = []
@@ -211,12 +220,12 @@ class LabelingTool:
                 ax.get_position().x0 + x * ax.get_position().width,
                 ax.get_position().y0 + y * ax.get_position().height,
                 w * ax.get_position().width * 0.95,
-                h * ax.get_position().height * 0.85
+                h * ax.get_position().height * 0.9
             ])
             btn_ax.set_facecolor(color)
             
             btn = Button(btn_ax, label, color=color, hovercolor=self._lighten_color(color))
-            btn.label.set_fontsize(9)
+            btn.label.set_fontsize(8)
             btn.label.set_fontweight('bold')
             btn.label.set_color('white')
             btn.on_clicked(callback)
@@ -249,7 +258,8 @@ class LabelingTool:
         # 获取当前帧数据
         frame_img = dm.get_frame(self.current_frame)
         ball_pos = dm.get_trajectory_at_frame(self.current_frame)
-        traj_window = dm.get_trajectory_window(self.current_frame, window_size=50)
+        # 减小轨迹窗口大小，避免画面杂乱（前后各15帧）
+        traj_window = dm.get_trajectory_window(self.current_frame, window_size=15)
         
         # 获取窗口内的事件
         events = dm.get_events_in_range(
@@ -271,11 +281,17 @@ class LabelingTool:
             traj_window, events, current_event
         )
         
-        # 2. 更新轨迹图
+        # 2. 更新轨迹图（包含加速度）
         if 'frame' in traj and len(traj['frame']) > 0:
+            # 计算总加速度 = sqrt(a_x^2 + a_y^2)
+            a_x = self.kinematics.get('a_x', np.zeros(len(traj['frame'])))
+            a_y = self.kinematics.get('a_y', np.zeros(len(traj['frame'])))
+            acceleration = np.sqrt(a_x**2 + a_y**2)
+            
             self.visualizers['trajectory'].draw(
                 traj['frame'], traj['x'], traj['y'], traj['visibility'],
                 self.kinematics.get('speed', np.zeros(len(traj['frame']))),
+                acceleration,
                 self.current_frame, events
             )
         
