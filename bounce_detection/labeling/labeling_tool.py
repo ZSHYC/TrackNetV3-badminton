@@ -261,12 +261,14 @@ class LabelingTool:
         # 减小轨迹窗口大小，避免画面杂乱（前后各15帧）
         traj_window = dm.get_trajectory_window(self.current_frame, window_size=15)
         
-        # 获取窗口内的事件（只显示当前帧和未来的事件，避免历史事件遮挡视线）
-        events = dm.get_events_in_range(
-            self.current_frame,  # 从当前帧开始，不显示过去的事件
-            min(dm.metadata['total_frames'], self.current_frame + 50)
-        )
+        # 获取当前事件
         current_event = dm.get_event_at_frame(self.current_frame)
+        
+        # 视频帧上只显示当前帧的事件（避免过去和未来的事件遮挡视线）
+        frame_events = [current_event] if current_event else []
+        
+        # 时序图显示所有事件（用于查看整体分布）
+        all_events = dm.events
         
         # 更新当前事件索引
         if current_event:
@@ -275,13 +277,13 @@ class LabelingTool:
                     self.current_event_idx = i
                     break
         
-        # 1. 更新帧可视化
+        # 1. 更新帧可视化（只显示当前事件）
         self.visualizers['frame'].draw_frame(
             frame_img, self.current_frame, ball_pos,
-            traj_window, events, current_event
+            traj_window, frame_events, current_event
         )
         
-        # 2. 更新轨迹图（包含加速度）
+        # 2. 更新轨迹图（显示所有事件的标记线）
         if 'frame' in traj and len(traj['frame']) > 0:
             # 计算总加速度 = sqrt(a_x^2 + a_y^2)
             a_x = self.kinematics.get('a_x', np.zeros(len(traj['frame'])))
@@ -292,7 +294,7 @@ class LabelingTool:
                 traj['frame'], traj['x'], traj['y'], traj['visibility'],
                 self.kinematics.get('speed', np.zeros(len(traj['frame']))),
                 acceleration,
-                self.current_frame, events
+                self.current_frame, all_events
             )
         
         # 3. 更新信息面板
