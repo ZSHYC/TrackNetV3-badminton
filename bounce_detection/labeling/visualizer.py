@@ -448,7 +448,11 @@ class InfoPanel:
             # 显示辅助规则（如果有）
             aux_rules = current_event.get('auxiliary_rules', [])
             if aux_rules:
-                lines.append(f"| Boost: +{len(aux_rules)*0.05:.2f} ({len(aux_rules)} aux) |")
+                aux_count = len(aux_rules)
+                aux_text = ",".join(aux_rules[:2])
+                if aux_count > 2:
+                    aux_text += f"+{aux_count-2}"
+                lines.append(f"| Aux: {aux_count:<2} {aux_text:<12} |")
             else:
                 lines.append("|                      |")
         else:
