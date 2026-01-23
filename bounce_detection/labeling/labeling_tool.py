@@ -133,8 +133,8 @@ class LabelingTool:
         # Row 1: [X坐标图    ] [Y坐标图 ]
         # Row 2: [速度图     ] [加速度图] [按钮区域]
         
-        gs = self.fig.add_gridspec(3, 4, height_ratios=[2.5, 0.8, 0.8], 
-                                   width_ratios=[2.5, 1.5, 1.2, 1.2],
+        gs = self.fig.add_gridspec(3, 4, height_ratios=[3.8, 0.6, 0.6], 
+                       width_ratios=[4.0, 1.1, 0.95, 0.95],
                                    hspace=0.25, wspace=0.15,
                                    left=0.03, right=0.97, top=0.95, bottom=0.05)
         
@@ -258,8 +258,8 @@ class LabelingTool:
         # 获取当前帧数据
         frame_img = dm.get_frame(self.current_frame)
         ball_pos = dm.get_trajectory_at_frame(self.current_frame)
-        # 减小轨迹窗口大小，避免画面杂乱（前后各2帧）
-        traj_window = dm.get_trajectory_window(self.current_frame, window_size=2)
+        # 减小轨迹窗口大小，避免画面杂乱（前后各0帧）
+        traj_window = dm.get_trajectory_window(self.current_frame, window_size=0)
          
         # 获取当前事件
         current_event = dm.get_event_at_frame(self.current_frame)

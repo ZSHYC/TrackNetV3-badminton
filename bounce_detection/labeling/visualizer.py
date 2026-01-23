@@ -150,16 +150,16 @@ class FrameVisualizer:
                 facecolor = color if is_confirmed else 'none'
                 self.ax.scatter(event['x'], event['y'], 
                                c=facecolor, edgecolors=dark_color,
-                               s=300, marker=marker, linewidths=3, zorder=6)
+                               s=100, marker=marker, linewidths=2.5, zorder=6)
                 if is_confirmed:
                     self.ax.scatter(event['x'], event['y'], 
-                                   c=color, s=450, alpha=0.2, marker='o', zorder=5)
+                                   c=color, s=150, alpha=0.2, marker='o', zorder=5)
             else:
                 # 其他事件 - 小标记，无标签
                 facecolor = color if is_confirmed else 'none'
                 self.ax.scatter(event['x'], event['y'], 
                                c=facecolor, edgecolors=dark_color,
-                               s=100, marker=marker, linewidths=1.5, zorder=4, alpha=0.7)
+                               s=35, marker=marker, linewidths=1.2, zorder=4, alpha=0.7)
         
         # 4. 绘制当前帧的球
         x, y, vis = ball_pos
@@ -167,13 +167,13 @@ class FrameVisualizer:
             if current_event:
                 event_type = current_event.get('event_type', 'other')
                 color = EVENT_COLORS.get(event_type, '#FFFF00')
-                self.ax.scatter(x, y, c=color, s=400, alpha=0.2, marker='o', zorder=8)
+                self.ax.scatter(x, y, c=color, s=140, alpha=0.2, marker='o', zorder=8)
                 self.ax.scatter(x, y, c='#FFFF00', edgecolors=color, 
-                               s=150, marker='o', linewidths=3, zorder=10)
+                               s=55, marker='o', linewidths=2.5, zorder=10)
             else:
-                self.ax.scatter(x, y, c='#FFFF00', s=250, alpha=0.2, marker='o', zorder=8)
+                self.ax.scatter(x, y, c='#FFFF00', s=90, alpha=0.2, marker='o', zorder=8)
                 self.ax.scatter(x, y, c='#FFFF00', edgecolors='#FF8C00', 
-                               s=100, marker='o', linewidths=2, zorder=10)
+                               s=38, marker='o', linewidths=1.8, zorder=10)
         
         # 5. 标题栏
         title_parts = [f"Frame {frame_idx}"]
