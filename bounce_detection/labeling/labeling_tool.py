@@ -127,7 +127,7 @@ class LabelingTool:
         # 创建图形
         self.fig = plt.figure(figsize=(22, 13), facecolor=THEME['bg_dark'])
         self.fig.canvas.manager.set_window_title('🏸 羽毛球落点检测标注工具')
-        self.fig.suptitle('🏸 Bounce Labeling Studio',
+        self.fig.suptitle(' Bounce Labeling Studio',
                   fontsize=16, fontweight='bold',
                   color=THEME['text_primary'], y=0.985)
         
@@ -137,7 +137,7 @@ class LabelingTool:
         # Row 2: [速度图     ] [加速度图] [按钮区域]
         
         gs = self.fig.add_gridspec(3, 4, height_ratios=[4.2, 0.55, 0.55], 
-                       width_ratios=[4.6, 1.05, 0.95, 0.9],
+                       width_ratios=[5.5, 0.8, 0.95, 0.75],
                        hspace=0.22, wspace=0.12,
                        left=0.03, right=0.97, top=0.95, bottom=0.05)
         
@@ -148,8 +148,8 @@ class LabelingTool:
         self.axes['shortcuts'] = self.fig.add_subplot(gs[0, 3])
         
         # 新增：4个时序图
-        self.axes['x_plot'] = self.fig.add_subplot(gs[1, 0:2])
-        self.axes['y_plot'] = self.fig.add_subplot(gs[1, 2:4])
+        self.axes['y_plot'] = self.fig.add_subplot(gs[1, 0:2])
+        self.axes['x_plot'] = self.fig.add_subplot(gs[1, 2:4])
         self.axes['speed_plot'] = self.fig.add_subplot(gs[2, 0:2])
         self.axes['acc_plot'] = self.fig.add_subplot(gs[2, 2])
         self.axes['buttons'] = self.fig.add_subplot(gs[2, 3])
