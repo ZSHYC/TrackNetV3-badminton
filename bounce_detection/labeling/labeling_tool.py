@@ -125,7 +125,7 @@ class LabelingTool:
         plt.style.use('dark_background')
         
         # 创建图形
-        self.fig = plt.figure(figsize=(20, 12), facecolor=THEME['bg_dark'])
+        self.fig = plt.figure(figsize=(22, 13), facecolor=THEME['bg_dark'])
         self.fig.canvas.manager.set_window_title('🏸 羽毛球落点检测标注工具')
         
         # 优化布局: 3行布局
@@ -133,10 +133,10 @@ class LabelingTool:
         # Row 1: [X坐标图    ] [Y坐标图 ]
         # Row 2: [速度图     ] [加速度图] [按钮区域]
         
-        gs = self.fig.add_gridspec(3, 4, height_ratios=[3.8, 0.6, 0.6], 
-                       width_ratios=[4.0, 1.1, 0.95, 0.95],
-                                   hspace=0.25, wspace=0.15,
-                                   left=0.03, right=0.97, top=0.95, bottom=0.05)
+        gs = self.fig.add_gridspec(3, 4, height_ratios=[4.2, 0.55, 0.55], 
+                       width_ratios=[4.6, 1.05, 0.95, 0.9],
+                       hspace=0.22, wspace=0.12,
+                       left=0.03, right=0.97, top=0.95, bottom=0.05)
         
         # 创建子图
         self.axes['frame'] = self.fig.add_subplot(gs[0, 0])
@@ -225,7 +225,7 @@ class LabelingTool:
             btn_ax.set_facecolor(color)
             
             btn = Button(btn_ax, label, color=color, hovercolor=self._lighten_color(color))
-            btn.label.set_fontsize(8)
+            btn.label.set_fontsize(9)
             btn.label.set_fontweight('bold')
             btn.label.set_color('white')
             btn.on_clicked(callback)

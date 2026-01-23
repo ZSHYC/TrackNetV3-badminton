@@ -18,8 +18,10 @@ from matplotlib.patches import Circle, Rectangle, FancyBboxPatch
 from matplotlib.widgets import Button, RadioButtons
 from typing import Dict, List, Optional, Tuple, Callable
 
-# 设置负号显示
+# 设置负号显示与全局字体
 matplotlib.rcParams['axes.unicode_minus'] = False
+matplotlib.rcParams['font.family'] = 'DejaVu Sans'
+matplotlib.rcParams['font.size'] = 10
 
 
 # ==================== 配色方案 ====================
@@ -27,14 +29,14 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 
 # 深色主题背景
 THEME = {
-    'bg_dark': '#1a1a2e',      # 深蓝黑色背景
-    'bg_panel': '#16213e',     # 面板背景
-    'bg_highlight': '#0f3460', # 高亮背景
-    'text_primary': '#ffffff', # 主要文字
-    'text_secondary': '#a0a0a0', # 次要文字
-    'text_accent': '#e94560',  # 强调文字
-    'border': '#3a3a5c',       # 边框
-    'grid': '#2a2a4a',         # 网格线
+    'bg_dark': '#141824',      # 深蓝黑背景
+    'bg_panel': '#1B2233',     # 面板背景
+    'bg_highlight': '#22304A', # 高亮背景
+    'text_primary': '#F2F4F8', # 主要文字
+    'text_secondary': '#A8B0C0', # 次要文字
+    'text_accent': '#FF6B6B',  # 强调文字
+    'border': '#2D374D',       # 边框
+    'grid': '#273047',         # 网格线
 }
 
 # 事件类型的颜色和标记 - 明亮清晰
@@ -244,15 +246,15 @@ class TrajectoryPlot:
             
             # 垂直虚线
             ax.axvline(x=event['frame'], color=color, 
-                      linestyle='--', alpha=0.5, linewidth=1.2)
+                      linestyle='--', alpha=0.35, linewidth=1.0)
             
             # 如果提供了数据，在数据线上标记点
             if data_y is not None and frames is not None:
                 idx = np.where(frames == event['frame'])[0]
                 if len(idx) > 0:
                     ax.scatter(event['frame'], data_y[idx[0]], 
-                              c=color, s=80, marker='*', zorder=5,
-                              edgecolors='white', linewidths=0.5)
+                              c=color, s=55, marker='*', zorder=5,
+                              edgecolors='white', linewidths=0.4)
     
     def draw(self,
              frames: np.ndarray,
@@ -314,8 +316,8 @@ class TrajectoryPlot:
             self.ax_y.axvline(x=event['frame'], color=color, 
                              linestyle='--', alpha=0.5, linewidth=1.2)
             self.ax_y.scatter(event['frame'], event['y'], 
-                             c=color, s=80, marker='*', zorder=5,
-                             edgecolors='white', linewidths=0.5)
+                             c=color, s=55, marker='*', zorder=5,
+                             edgecolors='white', linewidths=0.4)
         
         self.ax_y.set_ylabel('Y', fontsize=9, color=THEME['text_primary'])
         self.ax_y.set_title('Y Coordinate', fontsize=10, fontweight='bold',
