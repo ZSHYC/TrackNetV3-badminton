@@ -62,7 +62,7 @@ pip install numpy pandas matplotlib opencv-python
 
 ```bash
 # 基本用法（自动查找对应视频）
-python labeling_launcher.py --csv data/test/match2/csv/1_04_04_ball.csv
+python labeling_launcher.py --csv data/train/match5/csv/1_01_01_ball.csv
 
 # 指定视频文件
 python labeling_launcher.py --csv data/test/match1/csv/1_05_02_ball.csv \

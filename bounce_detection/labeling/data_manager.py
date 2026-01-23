@@ -498,3 +498,103 @@ def find_matching_video(csv_path: str, video_dirs: List[str] = None) -> Optional
             return str(cand)
     
     return None
+
+
+def get_match_csv_files(csv_path: str) -> List[str]:
+    """
+    获取当前match目录下的所有CSV文件列表（已排序）
+    
+    Args:
+        csv_path: 当前CSV文件路径
+    
+    Returns:
+        CSV文件路径列表
+    """
+    csv_path = Path(csv_path)
+    
+    # 查找CSV目录
+    csv_dir = csv_path.parent
+    if not csv_dir.exists():
+        return [str(csv_path)]
+    
+    # 获取所有 *_ball.csv 文件并排序
+    csv_files = sorted(csv_dir.glob('*_ball.csv'))
+    return [str(f) for f in csv_files]
+
+
+def get_previous_csv(csv_path: str) -> Optional[str]:
+    """
+    获取当前match中的上一个CSV文件
+    
+    Args:
+        csv_path: 当前CSV文件路径
+    
+    Returns:
+        上一个CSV文件路径，如果是第一个则返回None
+    """
+    all_csvs = get_match_csv_files(csv_path)
+    current_path = str(Path(csv_path).resolve())
+    
+    try:
+        current_idx = [str(Path(f).resolve()) for f in all_csvs].index(current_path)
+        if current_idx > 0:
+            return all_csvs[current_idx - 1]
+    except (ValueError, IndexError):
+        pass
+    
+    return None
+
+
+def get_next_csv(csv_path: str) -> Optional[str]:
+    """
+    获取当前match中的下一个CSV文件
+    
+    Args:
+        csv_path: 当前CSV文件路径
+    
+    Returns:
+        下一个CSV文件路径，如果是最后一个则返回None
+    """
+    all_csvs = get_match_csv_files(csv_path)
+    current_path = str(Path(csv_path).resolve())
+    
+    try:
+        current_idx = [str(Path(f).resolve()) for f in all_csvs].index(current_path)
+        if current_idx < len(all_csvs) - 1:
+            return all_csvs[current_idx + 1]
+    except (ValueError, IndexError):
+        pass
+    
+    return None
+
+
+def get_csv_index_info(csv_path: str) -> Tuple[int, int, str, str]:
+    """
+    获取当前CSV在match中的位置信息
+    
+    Args:
+        csv_path: 当前CSV文件路径
+    
+    Returns:
+        (当前索引, 总数, match名称, 视频名称)
+    """
+    csv_path = Path(csv_path)
+    all_csvs = get_match_csv_files(str(csv_path))
+    
+    # 获取match名称（从路径中提取）
+    match_name = "Unknown"
+    for part in csv_path.parts:
+        if part.startswith('match'):
+            match_name = part
+            break
+    
+    # 获取视频名称
+    video_name = csv_path.stem.replace('_ball', '')
+    
+    # 获取当前索引
+    current_path = str(csv_path.resolve())
+    try:
+        current_idx = [str(Path(f).resolve()) for f in all_csvs].index(current_path)
+        return (current_idx + 1, len(all_csvs), match_name, video_name)
+    except (ValueError, IndexError):
+        return (1, 1, match_name, video_name)

@@ -408,9 +408,13 @@ class InfoPanel:
              total_frames: int,
              current_event: Optional[Dict],
              statistics: Dict,
+             match_info: Dict = None,
              mode: str = 'navigate'):
         """
         Draw info panel
+        
+        Args:
+            match_info: {'match_name': str, 'video_name': str, 'video_idx': int, 'video_total': int}
         """
         self.ax.clear()
         self.ax.axis('off')
@@ -434,6 +438,16 @@ class InfoPanel:
                      color=THEME['text_primary'], va='center')
         
         lines = []
+        
+        # ===== Match/Video Info =====
+        if match_info:
+            lines.append("MATCH/VIDEO")
+            lines.append(f"Match: {match_info.get('match_name', 'N/A')}")
+            lines.append(f"Video: {match_info.get('video_name', 'N/A')}")
+            video_idx = match_info.get('video_idx', 1)
+            video_total = match_info.get('video_total', 1)
+            lines.append(f"[{video_idx}/{video_total}]")
+            lines.append("")
         
         # ===== Frame Info =====
         progress = 100 * current_frame / max(1, total_frames - 1)
@@ -643,6 +657,10 @@ class ShortcutPanel:
             ("Home", "First frame", False),
             ("End", "Last frame", False),
             ("PgUp/Dn", "+/-30 frm", False),
+            ("", "", False),
+            ("Video", "", True),
+            ("Ctrl+<-", "Prev video", False),
+            ("Ctrl+->", "Next video", False),
             ("", "", False),
             ("Edit", "", True),
             ("Y", "Confirm", False),

@@ -24,7 +24,7 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from .data_manager import LabelingDataManager, find_matching_video
+from .data_manager import LabelingDataManager, find_matching_video, get_previous_csv, get_next_csv, get_csv_index_info
 from .visualizer import FrameVisualizer, TrajectoryPlot, InfoPanel, EventListPanel, ShortcutPanel, THEME
 
 
@@ -75,6 +75,7 @@ class LabelingTool:
         self.current_event_idx = -1
         self.modified = False
         self.running = False
+        self.review_mode = label_path is not None  # 记录是否为查看模式
         
         # 计算运动学特征
         self._compute_kinematics()
@@ -195,24 +196,28 @@ class LabelingTool:
         ax.set_facecolor(THEME['bg_panel'])
         
         # 紧凑的按钮配置: (x, y, w, h, label, callback, color)
-        # 4行3列布局
+        # 5行3列布局 - 新增视频导航按钮
         button_specs = [
-            # Row 1 - Navigation
-            (0.02, 0.76, 0.30, 0.22, '< Prev', self._prev_frame, '#3498DB'),
-            (0.35, 0.76, 0.30, 0.22, 'Next >', self._next_frame, '#3498DB'),
-            (0.68, 0.76, 0.30, 0.22, 'PrevEvt', self._prev_event, '#9B59B6'),
+            # Row 1 - Frame Navigation
+            (0.02, 0.82, 0.30, 0.16, '< Prev', self._prev_frame, '#3498DB'),
+            (0.35, 0.82, 0.30, 0.16, 'Next >', self._next_frame, '#3498DB'),
+            (0.68, 0.82, 0.30, 0.16, 'PrevEvt', self._prev_event, '#9B59B6'),
             
-            # Row 2
-            (0.02, 0.52, 0.30, 0.22, 'NextEvt', self._next_event, '#9B59B6'),
-            (0.35, 0.52, 0.30, 0.22, 'Confirm', lambda e: self._confirm_event(), '#27AE60'),
-            (0.68, 0.52, 0.30, 0.22, 'Delete', lambda e: self._delete_event(), '#E74C3C'),
+            # Row 2 - Video Navigation (NEW)
+            (0.02, 0.64, 0.47, 0.16, '<< PrevVid', lambda e: self._prev_video(), '#E67E22'),
+            (0.51, 0.64, 0.47, 0.16, 'NextVid >>', lambda e: self._next_video(), '#E67E22'),
             
-            # Row 3 - Event types
-            (0.02, 0.28, 0.30, 0.22, '* Land', lambda e: self._set_event_type('landing'), '#FF6B6B'),
-            (0.35, 0.28, 0.30, 0.22, '+ Hit', lambda e: self._set_event_type('hit'), '#4ECDC4'),
-            (0.68, 0.28, 0.30, 0.22, 'Add New', lambda e: self._add_event(), '#1ABC9C'),
+            # Row 3 - Event Operations
+            (0.02, 0.46, 0.30, 0.16, 'NextEvt', self._next_event, '#9B59B6'),
+            (0.35, 0.46, 0.30, 0.16, 'Confirm', lambda e: self._confirm_event(), '#27AE60'),
+            (0.68, 0.46, 0.30, 0.16, 'Delete', lambda e: self._delete_event(), '#E74C3C'),
             
-            # Row 4 - System
+            # Row 4 - Event types
+            (0.02, 0.28, 0.30, 0.16, '* Land', lambda e: self._set_event_type('landing'), '#FF6B6B'),
+            (0.35, 0.28, 0.30, 0.16, '+ Hit', lambda e: self._set_event_type('hit'), '#4ECDC4'),
+            (0.68, 0.28, 0.30, 0.16, 'Add New', lambda e: self._add_event(), '#1ABC9C'),
+            
+            # Row 5 - System
             (0.02, 0.04, 0.47, 0.22, 'Save (S)', lambda e: self._save(), '#F39C12'),
             (0.51, 0.04, 0.47, 0.22, 'Quit (Q)', lambda e: self._quit(), '#95A5A6'),
         ]
@@ -231,7 +236,7 @@ class LabelingTool:
                 spine.set_linewidth(0.8)
             
             btn = Button(btn_ax, label, color=color, hovercolor=self._lighten_color(color))
-            btn.label.set_fontsize(9)
+            btn.label.set_fontsize(8)
             btn.label.set_fontweight('bold')
             btn.label.set_color('white')
             btn.label.set_fontfamily('DejaVu Sans')
@@ -305,11 +310,21 @@ class LabelingTool:
             )
         
         # 3. 更新信息面板
+        # 获取match和视频信息
+        idx, total, match_name, video_name = get_csv_index_info(dm.csv_path)
+        match_info = {
+            'match_name': match_name,
+            'video_name': video_name,
+            'video_idx': idx,
+            'video_total': total
+        }
+        
         self.visualizers['info'].draw(
             self.current_frame,
             dm.metadata['total_frames'],
             current_event,
-            dm.get_statistics()
+            dm.get_statistics(),
+            match_info
         )
         
         # 4. 更新事件列表
@@ -457,6 +472,90 @@ class LabelingTool:
         plt.close(self.fig)
         print("\n[Bye] Labeling tool closed")
     
+    # ==================== Video Navigation ====================
+    
+    def _load_new_video(self, new_csv_path: str, load_existing_labels: bool = False):
+        """
+        加载新的CSV和视频
+        
+        Args:
+            new_csv_path: 新的CSV文件路径
+            load_existing_labels: 是否加载已有标注（查看模式）
+        """
+        if self.modified:
+            # 提示保存
+            print("\n[!] You have unsaved changes!")
+            response = input("Save before switching video? (y/n): ").strip().lower()
+            if response == 'y':
+                self._save()
+        
+        # 查找对应视频
+        new_video_path = find_matching_video(new_csv_path)
+        
+        # 查找已有标注文件（如果需要）
+        new_label_path = None
+        if load_existing_labels:
+            # 尝试查找标注文件
+            import os
+            label_name = os.path.basename(new_csv_path).replace('_ball.csv', '_labels.json')
+            # 尝试在csv同级的labels目录中查找
+            csv_parent = os.path.dirname(os.path.dirname(new_csv_path))
+            label_path_candidate = os.path.join(csv_parent, 'labels', label_name)
+            if os.path.exists(label_path_candidate):
+                new_label_path = label_path_candidate
+        
+        # 重新初始化数据管理器
+        self.data_manager = LabelingDataManager(
+            video_path=new_video_path,
+            csv_path=new_csv_path,
+            label_path=new_label_path,
+            lazy_load_video=False
+        )
+        
+        # 重置状态
+        self.current_frame = 0
+        self.current_event_idx = -1
+        self.modified = False
+        
+        # 重新计算运动学特征
+        self._compute_kinematics()
+        
+        # 如果没有加载已有标注，则自动检测
+        if not new_label_path:
+            self.prefill_from_detector()
+        
+        # 如果有事件，跳到第一个
+        if self.data_manager.events:
+            self.current_frame = self.data_manager.events[0]['frame']
+            self.current_event_idx = 0
+        
+        # 更新显示
+        self._update_display()
+        
+        # 获取当前视频信息
+        idx, total, match, video = get_csv_index_info(new_csv_path)
+        status = f'[Labeled]' if new_label_path else '[New]'
+        print(f"\n[Switch Video] {status} Loaded: {match}/{video} ({idx}/{total})")
+        self._update_status(f'{status} {match}/{video} ({idx}/{total})')
+    
+    def _prev_video(self):
+        """切换到上一个视频"""
+        prev_csv = get_previous_csv(self.data_manager.csv_path)
+        if prev_csv:
+            self._load_new_video(prev_csv, load_existing_labels=self.review_mode)
+        else:
+            print("[!] Already at first video in match")
+            self._update_status('Already at first video')
+    
+    def _next_video(self):
+        """切换到下一个视频"""
+        next_csv = get_next_csv(self.data_manager.csv_path)
+        if next_csv:
+            self._load_new_video(next_csv, load_existing_labels=self.review_mode)
+        else:
+            print("[!] Already at last video in match")
+            self._update_status('Already at last video')
+    
     # ==================== Keyboard Events ====================
     
     def _on_key_press(self, event):
@@ -466,6 +565,7 @@ class LabelingTool:
         Full shortcut mapping:
         - Navigate: <- -> Up Down A D W (D for next frame, not delete)
         - Quick jump: Home End PageUp PageDown
+        - Video Navigation: Ctrl+Left(prev video) Ctrl+Right(next video)
         - Edit: Y(confirm) Delete(delete) L(land) H(hit) O(oof) N(add)
         - System: Ctrl+S(save) S(save) Q Escape(quit)
         """
@@ -473,6 +573,17 @@ class LabelingTool:
             return
         
         key = event.key.lower()
+        
+        # ===== Video Navigation =====
+        # Previous video: Ctrl+Left
+        if key == 'ctrl+left':
+            self._prev_video()
+            return
+        
+        # Next video: Ctrl+Right
+        if key == 'ctrl+right':
+            self._next_video()
+            return
         
         # ===== Navigation =====
         # Previous frame: Left arrow or A
@@ -569,12 +680,16 @@ class LabelingTool:
         """Start labeling tool"""
         # Print startup info
         print("\n" + "="*65)
-        print("  Badminton Bounce Detection Labeling Tool v2.0")
+        print("  Badminton Bounce Detection Labeling Tool v2.1")
         print("="*65)
         print(f"  CSV: {self.data_manager.csv_path}")
         print(f"  Video: {self.data_manager.video_path or 'Not loaded'}")
         print(f"  Total frames: {self.data_manager.metadata['total_frames']}")
         print(f"  Pre-filled events: {len(self.data_manager.events)}")
+        
+        # 显示match/视频信息
+        idx, total, match_name, video_name = get_csv_index_info(self.data_manager.csv_path)
+        print(f"  Match: {match_name} | Video: {video_name} [{idx}/{total}]")
         print("="*65)
         print("\n  Keyboard Shortcuts:")
         print("  +-----------------------------------------------------------+")
@@ -583,6 +698,9 @@ class LabelingTool:
         print("  |   Up / W    Prev event     Down      Next event           |")
         print("  |   Home      First frame    End       Last frame           |")
         print("  |   PageUp    -30 frames     PageDown  +30 frames           |")
+        print("  +-----------------------------------------------------------+")
+        print("  | Video Navigation (NEW)                                    |")
+        print("  |   Ctrl+<-   Prev video     Ctrl+->   Next video           |")
         print("  +-----------------------------------------------------------+")
         print("  | Edit                                                      |")
         print("  |   Y         Confirm        Delete    Delete event         |")

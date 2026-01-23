@@ -34,13 +34,14 @@ def label_single_file(csv_path: str, video_path: str = None, labels_path: str = 
     return tool.run()
 
 
-def label_match_directory(match_dir: str, output_dir: str = None):
+def label_match_directory(match_dir: str, output_dir: str = None, review_mode: bool = False):
     """
     批量标注整个 match 目录
     
     Args:
         match_dir: match 目录路径 (如 data/test/match1)
         output_dir: 标注输出目录
+        review_mode: 是否进入查看/修改已标注文件模式
     """
     # 查找 CSV 文件
     csv_dir = os.path.join(match_dir, 'csv')
@@ -71,29 +72,42 @@ def label_match_directory(match_dir: str, output_dir: str = None):
     print(f"\nLabeled: {len(labeled_files)}")
     print(f"Pending: {len(pending_files)}")
     
-    if not pending_files:
-        print("All files have been labeled!")
-        return
+    # 根据模式选择要处理的文件
+    if review_mode:
+        # 查看/修改模式：处理已标注的文件
+        files_to_process = [f for f in csv_files if os.path.basename(f) in labeled_files]
+        if not files_to_process:
+            print("No labeled files found to review!")
+            return
+        print(f"\n[Review Mode] Will review {len(files_to_process)} labeled files")
+    else:
+        # 标注模式：处理未标注的文件
+        files_to_process = pending_files
+        if not files_to_process:
+            print("All files have been labeled!")
+            print("\nTip: Use --review flag to view/modify labeled files")
+            print("Example: python labeling_launcher.py --match_dir data/test/match1 --review")
+            return
     
-    # 逐个标注
-    for i, csv_path in enumerate(pending_files):
+    # 逐个处理
+    for i, csv_path in enumerate(files_to_process):
         print(f"\n{'='*60}")
-        print(f"[{i+1}/{len(pending_files)}] {os.path.basename(csv_path)}")
+        print(f"[{i+1}/{len(files_to_process)}] {os.path.basename(csv_path)}")
         print('='*60)
         
         # 查找对应视频
         video_path = find_matching_video(csv_path)
         
-        # 计算输出路径
+        # 计算标注文件路径
         label_name = os.path.basename(csv_path).replace('_ball.csv', '_labels.json')
         label_path = os.path.join(output_dir, label_name)
         
-        # 启动标注
+        # 启动标注工具
         tool = LabelingTool(
             csv_path=csv_path,
             video_path=video_path,
-            label_path=None,  # 新文件
-            auto_detect=True
+            label_path=label_path if review_mode else None,  # 查看模式加载已有标注
+            auto_detect=not review_mode  # 查看模式不自动检测
         )
         
         events = tool.run()
@@ -103,7 +117,7 @@ def label_match_directory(match_dir: str, output_dir: str = None):
             tool.data_manager.save_labels(label_path)
         
         # 询问是否继续
-        if i < len(pending_files) - 1:
+        if i < len(files_to_process) - 1:
             response = input("\nContinue to next file? (y/n): ").strip().lower()
             if response != 'y':
                 break
@@ -218,6 +232,9 @@ Examples:
   # Batch label a match directory
   python labeling_launcher.py --match_dir data/test/match1
 
+  # Review/modify labeled files
+  python labeling_launcher.py --match_dir data/test/match1 --review
+
   # Export all labels to CSV
   python labeling_launcher.py --export data/test/match1/labels --output training_events.csv
 
@@ -238,6 +255,8 @@ Examples:
     parser.add_argument('--labels', type=str, default=None, help='Path to existing labels file')
     parser.add_argument('--output', type=str, default=None, help='Output path for export')
     parser.add_argument('--output_dir', type=str, default=None, help='Output directory for batch labeling')
+    parser.add_argument('--review', action='store_true',
+                       help='Review/modify already labeled files (use with --match_dir)')
     parser.add_argument('--lazy-load', action='store_true',
                        help='Enable lazy video loading (save memory for long videos)')
     
@@ -249,7 +268,7 @@ Examples:
     
     elif args.match_dir:
         # 批量标注
-        label_match_directory(args.match_dir, args.output_dir)
+        label_match_directory(args.match_dir, args.output_dir, args.review)
     
     elif args.export:
         # 导出
