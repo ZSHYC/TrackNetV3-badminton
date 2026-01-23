@@ -415,6 +415,23 @@ class InfoPanel:
         self.ax.clear()
         self.ax.axis('off')
         self.ax.set_facecolor(THEME['bg_panel'])
+
+        # Card background
+        self.ax.add_patch(FancyBboxPatch((0.01, 0.02), 0.98, 0.96,
+                                         boxstyle='round,pad=0.015,rounding_size=0.02',
+                                         transform=self.ax.transAxes,
+                                         facecolor=THEME['bg_panel'],
+                                         edgecolor=THEME['border'],
+                                         linewidth=1.2, alpha=0.95, zorder=0))
+        # Header bar
+        self.ax.add_patch(Rectangle((0.01, 0.93), 0.98, 0.05,
+                                    transform=self.ax.transAxes,
+                                    facecolor=THEME['bg_highlight'],
+                                    edgecolor='none', alpha=0.9, zorder=1))
+        self.ax.text(0.03, 0.955, "INFO",
+                     transform=self.ax.transAxes,
+                     fontsize=11, fontweight='bold',
+                     color=THEME['text_primary'], va='center')
         
         lines = []
         
@@ -422,18 +439,13 @@ class InfoPanel:
         progress = 100 * current_frame / max(1, total_frames - 1)
         progress_bar = self._make_progress_bar(progress, width=15)
         
-        lines.append("+----------------------+")
-        lines.append("|    POSITION          |")
-        lines.append("+----------------------+")
-        lines.append(f"| Frame: {current_frame:5d}/{total_frames-1:<5d} |")
-        lines.append(f"| {progress_bar} {progress:5.1f}% |")
-        lines.append("+----------------------+")
+        lines.append("POSITION")
+        lines.append(f"Frame: {current_frame}/{total_frames-1}")
+        lines.append(f"{progress_bar} {progress:5.1f}%")
         lines.append("")
         
         # ===== Event Info =====
-        lines.append("+----------------------+")
-        lines.append("|    CURRENT EVENT     |")
-        lines.append("+----------------------+")
+        lines.append("CURRENT EVENT")
         if current_event:
             event_type = current_event.get('event_type', 'N/A')
             type_name = EVENT_NAMES.get(event_type, event_type)
@@ -442,10 +454,10 @@ class InfoPanel:
             rule = current_event.get('rule', 'N/A')[:12]
             conf = current_event.get('confidence', 0)
             
-            lines.append(f"| Type: {symbol} {type_name:<11} |")
-            lines.append(f"| Status: {confirmed:<12} |")
-            lines.append(f"| Rule: {rule:<14} |")
-            lines.append(f"| Conf: {conf:.2f}            |")
+            lines.append(f"Type: {symbol} {type_name}")
+            lines.append(f"Status: {confirmed}")
+            lines.append(f"Rule: {rule}")
+            lines.append(f"Conf: {conf:.2f}")
             
             # 显示辅助规则（如果有）
             aux_rules = current_event.get('auxiliary_rules', [])
@@ -454,47 +466,35 @@ class InfoPanel:
                 aux_text = ",".join(aux_rules[:2])
                 if aux_count > 2:
                     aux_text += f"+{aux_count-2}"
-                lines.append(f"| Aux: {aux_count:<2} {aux_text:<12} |")
+                lines.append(f"Aux: {aux_count} {aux_text}")
             else:
-                lines.append("|                      |")
+                lines.append("Aux: -")
         else:
-            lines.append("|   (No event here)    |")
-            lines.append("|                      |")
-            lines.append("|                      |")
-            lines.append("|                      |")
-            lines.append("|                      |")
-        lines.append("+----------------------+")
+            lines.append("(No event here)")
         lines.append("")
         
         # ===== Statistics =====
-        lines.append("+----------------------+")
-        lines.append("|    STATISTICS        |")
-        lines.append("+----------------------+")
+        lines.append("STATISTICS")
         total = statistics.get('total_events', 0)
         confirmed = statistics.get('confirmed_events', 0)
         unconfirmed = statistics.get('unconfirmed_events', 0)
-        lines.append(f"| Total: {total:<14} |")
-        lines.append(f"| Confirmed: {confirmed:<10} |")
-        lines.append(f"| Pending: {unconfirmed:<12} |")
+        lines.append(f"Total: {total}")
+        lines.append(f"Confirmed: {confirmed}")
+        lines.append(f"Pending: {unconfirmed}")
         
         by_type = statistics.get('by_type', {})
         for etype, count in list(by_type.items())[:3]:
             symbol = EVENT_SYMBOLS.get(etype, '?')
             name = EVENT_NAMES.get(etype, etype)[:6]
-            lines.append(f"|  {symbol} {name}: {count:<10} |")
-        lines.append("+----------------------+")
+            lines.append(f"{symbol} {name}: {count}")
         
         text = '\n'.join(lines)
-        self.ax.text(0.02, 0.98, text, 
+        self.ax.text(0.03, 0.90, text, 
                     transform=self.ax.transAxes,
                     fontsize=9,
-                    fontfamily='monospace',
+                    fontfamily='DejaVu Sans Mono',
                     verticalalignment='top',
-                    color=THEME['text_primary'],
-                    bbox=dict(boxstyle='round,pad=0.3', 
-                             facecolor=THEME['bg_panel'], 
-                             edgecolor=THEME['border'],
-                             alpha=0.95))
+                    color=THEME['text_primary'])
     
     def _make_progress_bar(self, percent: float, width: int = 10) -> str:
         """Create text progress bar"""
@@ -520,19 +520,29 @@ class EventListPanel:
         self.ax.clear()
         self.ax.axis('off')
         self.ax.set_facecolor(THEME['bg_panel'])
+
+        # Card background
+        self.ax.add_patch(FancyBboxPatch((0.01, 0.02), 0.98, 0.96,
+                                         boxstyle='round,pad=0.015,rounding_size=0.02',
+                                         transform=self.ax.transAxes,
+                                         facecolor=THEME['bg_panel'],
+                                         edgecolor=THEME['border'],
+                                         linewidth=1.2, alpha=0.95, zorder=0))
+        # Header bar
+        self.ax.add_patch(Rectangle((0.01, 0.93), 0.98, 0.05,
+                                    transform=self.ax.transAxes,
+                                    facecolor=THEME['bg_highlight'],
+                                    edgecolor='none', alpha=0.9, zorder=1))
+        self.ax.text(0.03, 0.955, "EVENTS",
+                     transform=self.ax.transAxes,
+                     fontsize=11, fontweight='bold',
+                     color=THEME['text_primary'], va='center')
         
         lines = []
         
-        # Title
-        lines.append("+----------------------+")
-        lines.append("|    EVENT LIST        |")
-        lines.append("+----------------------+")
-        
         if not events:
-            lines.append("|  (No events found)   |")
-            lines.append("|                      |")
-            lines.append("|  Tip: Use Phase1     |")
-            lines.append("|  or add manually     |")
+            lines.append("(No events found)")
+            lines.append("Tip: Use Phase1 or add manually")
         else:
             # Show event list (max 15, centered on current)
             max_display = 15
@@ -540,7 +550,7 @@ class EventListPanel:
             end_idx = min(len(events), start_idx + max_display)
             
             if start_idx > 0:
-                lines.append(f"|  ... ({start_idx} more above)  |")
+                lines.append(f"... ({start_idx} more above)")
             
             for i in range(start_idx, end_idx):
                 event = events[i]
@@ -565,31 +575,26 @@ class EventListPanel:
                 frame = event.get('frame', 0)
                 
                 # Format line
-                line = f"|{prefix}[{confirmed}] F{frame:04d} {symbol}{type_abbr}{suffix}|"
+                line = f"{prefix}[{confirmed}] F{frame:04d} {symbol}{type_abbr}{suffix}"
                 lines.append(line)
             
             if end_idx < len(events):
                 remaining = len(events) - end_idx
-                lines.append(f"|  ... ({remaining} more below)  |")
+                lines.append(f"... ({remaining} more below)")
         
         # Legend
-        lines.append("+----------------------+")
-        lines.append("|     -- Legend --     |")
-        lines.append(f"| {EVENT_SYMBOLS['landing']}Land {EVENT_SYMBOLS['hit']}Hit {EVENT_SYMBOLS['out_of_frame']}OOF    |")
-        lines.append("| Y=Confirmed ?=Pending|")
-        lines.append("+----------------------+")
+        lines.append("")
+        lines.append("Legend")
+        lines.append(f"{EVENT_SYMBOLS['landing']}Land {EVENT_SYMBOLS['hit']}Hit {EVENT_SYMBOLS['out_of_frame']}OOF")
+        lines.append("Y=Confirmed  ?=Pending")
         
         text = '\n'.join(lines)
-        self.ax.text(0.02, 0.98, text,
+        self.ax.text(0.03, 0.90, text,
                     transform=self.ax.transAxes,
                     fontsize=9,
-                    fontfamily='monospace',
+                    fontfamily='DejaVu Sans Mono',
                     verticalalignment='top',
-                    color=THEME['text_primary'],
-                    bbox=dict(boxstyle='round,pad=0.3', 
-                             facecolor=THEME['bg_panel'], 
-                             edgecolor=THEME['border'],
-                             alpha=0.95))
+                    color=THEME['text_primary'])
 
 
 class ShortcutPanel:
@@ -609,6 +614,23 @@ class ShortcutPanel:
         self.ax.clear()
         self.ax.axis('off')
         self.ax.set_facecolor(THEME['bg_panel'])
+
+        # Card background
+        self.ax.add_patch(FancyBboxPatch((0.01, 0.02), 0.98, 0.96,
+                                         boxstyle='round,pad=0.015,rounding_size=0.02',
+                                         transform=self.ax.transAxes,
+                                         facecolor=THEME['bg_panel'],
+                                         edgecolor=THEME['border'],
+                                         linewidth=1.2, alpha=0.95, zorder=0))
+        # Header bar
+        self.ax.add_patch(Rectangle((0.01, 0.93), 0.98, 0.05,
+                                    transform=self.ax.transAxes,
+                                    facecolor=THEME['bg_highlight'],
+                                    edgecolor='none', alpha=0.9, zorder=1))
+        self.ax.text(0.03, 0.955, "SHORTCUTS",
+                     transform=self.ax.transAxes,
+                     fontsize=11, fontweight='bold',
+                     color=THEME['text_primary'], va='center')
         
         shortcuts = [
             ("SHORTCUTS", "", True),  # Title
@@ -636,32 +658,25 @@ class ShortcutPanel:
         ]
         
         lines = []
-        lines.append("+----------------------+")
         
         for key, desc, is_header in shortcuts:
             if is_header and key:
-                lines.append(f"|    {key:<18} |")
+                lines.append(f"{key}")
             elif is_header:
-                lines.append("+----------------------+")
+                lines.append("")
             elif key == "":
-                lines.append("|                      |")
+                lines.append("")
             else:
                 # Highlight current key
                 if highlight_key and key.lower().startswith(highlight_key.lower()):
-                    lines.append(f"| >{key:<6} {desc:<12} |")
+                    lines.append(f"> {key:<6} {desc}")
                 else:
-                    lines.append(f"|  {key:<6} {desc:<12} |")
-        
-        lines.append("+----------------------+")
+                    lines.append(f"  {key:<6} {desc}")
         
         text = '\n'.join(lines)
-        self.ax.text(0.02, 0.98, text,
+        self.ax.text(0.03, 0.90, text,
                     transform=self.ax.transAxes,
-                    fontsize=8,
-                    fontfamily='monospace',
+                    fontsize=9,
+                    fontfamily='DejaVu Sans Mono',
                     verticalalignment='top',
-                    color=THEME['text_primary'],
-                    bbox=dict(boxstyle='round,pad=0.3', 
-                             facecolor=THEME['bg_panel'], 
-                             edgecolor=THEME['border'],
-                             alpha=0.95))
+                    color=THEME['text_primary'])
