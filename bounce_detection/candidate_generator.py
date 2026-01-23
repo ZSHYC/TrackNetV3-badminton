@@ -191,7 +191,18 @@ class BounceCandidateGenerator:
             
             # ---------- 落地类主规则 ----------
             
-            # 主规则4: 可见→不可见（落地或出界）
+            # 主规则4: 速度急剧下降（最强落点规则）
+            if primary_candidate is None:
+                result = self._check_speed_drop(t, n, visibility, speed)
+                if result:
+                    primary_candidate = {
+                        'event_type': 'landing',
+                        'rule': 'speed_drop',
+                        'confidence': 0.85  # 提高置信度，这是最可靠的落点证据
+                    }
+                    primary_features = result
+            
+            # 主规则5: 可见→不可见（降级为弱规则，仅作异常标记）
             if primary_candidate is None:
                 result = self._check_visibility_drop(t, n, x, y, visibility, speed, v_y, 
                                                      img_height, img_width, visible_count)
@@ -199,37 +210,25 @@ class BounceCandidateGenerator:
                     primary_candidate = {
                         'event_type': result['event_type'],
                         'rule': result['rule'],
-                        'confidence': result['confidence']
+                        'confidence': result['confidence']  # 已在函数内降低
                     }
                     primary_features = result['features']
-            
-            # 主规则5: 速度急剧下降
-            if primary_candidate is None:
-                # 显式传入 y 和 v_y 进行空间和方向约束
-                result = self._check_speed_drop(t, n, visibility, speed, y=y, v_y=v_y, img_height=img_height)
-                if result:
-                    primary_candidate = {
-                        'event_type': 'landing',
-                        'rule': 'speed_drop',
-                        'confidence': 0.75
-                    }
-                    primary_features = result
             
             # ==================== 第二步：检测辅助规则（可叠加）====================
             auxiliary_rules = []
             auxiliary_features = {}
             confidence_boost = 0.0
             
-            # 辅助规则1: Y坐标局部极大值
+            # 辅助规则1: Y坐标局部极大值（最低点）
             aux_result = self._check_y_local_max(t, n, y, visibility)
             if aux_result:
                 auxiliary_rules.append('y_local_max')
                 auxiliary_features['y_local_max'] = aux_result
-                # 对 hit 和 landing 均增强置信度
-                # 对于 landing，这是非常强的特征（落地往往是Y坐标最大值/最低点）
+                # 对 landing 和 hit 均增强置信度
+                # 落地往往发生在最低点，这是非常强的物理特征
                 if primary_candidate:
                     if primary_candidate['event_type'] == 'landing':
-                        confidence_boost += 0.10  # 落地时Y极大值是非常强的证据
+                        confidence_boost += 0.08  # 落地时Y极大值是强证据
                     elif primary_candidate['event_type'] == 'hit':
                         confidence_boost += 0.05  # 击球也可能在低点（挑球）
 
@@ -375,7 +374,7 @@ class BounceCandidateGenerator:
     def _check_visibility_drop(self, t: int, n: int, x: np.ndarray, y: np.ndarray,
                                visibility: np.ndarray, speed: np.ndarray, v_y: np.ndarray,
                                img_height: int, img_width: int, visible_count: int) -> Optional[Dict]:
-        """主规则: 可见性消失检测（落地或出界）"""
+        """弱规则: 可见性消失检测（主要用于异常标记，不作为主要落点判定）"""
         if t + 1 >= n:
             return None
         if visibility[t] != 1 or visibility[t+1] != 0:
@@ -384,22 +383,6 @@ class BounceCandidateGenerator:
         recent_speed = np.mean(speed[max(0, t-3):t+1])
         if recent_speed < self.min_speed_before_landing:
             return None
-            
-        # 物理约束：落地必须是向下运动 (v_y > 0)
-        # 如果 v_y < 0 (向上运动) 但消失了，可能是飞出画面上方或被遮挡，不应判为落地
-        if v_y[t] < -1.0: # 给一点宽容度防止噪声
-            # 向上消失，更有可能是 out_of_frame (上方) 或 漏检
-            # 这里保守起见，不作为 landing 返回，或者作为 out_of_frame
-            return {
-                'event_type': 'out_of_frame',
-                'rule': 'visibility_drop_upward', # 新增规则类型标识
-                'confidence': 0.60,
-                'features': {
-                    'speed_before': float(recent_speed),
-                    'v_y': float(v_y[t]),
-                    'visible_before': int(visible_count)
-                }
-            }
         
         # 判断是否在边缘
         is_edge = (x[t] < self.edge_margin or x[t] > img_width - self.edge_margin or
@@ -413,37 +396,44 @@ class BounceCandidateGenerator:
             'edge_distance': edge_distance
         }
         
+        # 边缘消失 -> 出界
         if is_edge:
             return {
                 'event_type': 'out_of_frame',
                 'rule': 'visibility_drop_edge',
+                'confidence': 0.45,
+                'features': features
+            }
+        
+        # 向上消失 -> 出界/丢失
+        if v_y[t] < -1.0:
+            return {
+                'event_type': 'out_of_frame',
+                'rule': 'visibility_drop_upward',
                 'confidence': 0.50,
                 'features': features
             }
         
-        # 新增规则：最小落地高度约束
-        # 如果消失点在画面顶部 15% 区域，这绝不可能是落地，而是高空球出界/丢失
+        # 高空消失 -> 出界/丢失
         if y[t] < img_height * 0.15:
             return {
                 'event_type': 'out_of_frame',
-                'rule': 'visibility_drop_high_altitude', # 新增规则：高空丢失
-                'confidence': 0.60,
+                'rule': 'visibility_drop_high_altitude',
+                'confidence': 0.50,
                 'features': features
             }
         
+        # 中间区域消失 -> 可能是落地，但置信度降低（因为TrackNet通常能跟踪界内球）
         return {
             'event_type': 'landing',
             'rule': 'visibility_drop',
-            'confidence': 0.85,
+            'confidence': 0.55,  # 大幅降低置信度
             'features': features
         }
     
     def _check_speed_drop(self, t: int, n: int, visibility: np.ndarray,
-                          speed: np.ndarray,
-                          y: Optional[np.ndarray] = None, 
-                          v_y: Optional[np.ndarray] = None,
-                          img_height: int = 288) -> Optional[Dict]:
-        """主规则: 速度急剧下降检测"""
+                          speed: np.ndarray) -> Optional[Dict]:
+        """主规则: 速度急剧下降检测（落点最强判定）"""
         if t <= 0 or t + 2 >= n:
             return None
         
@@ -453,30 +443,17 @@ class BounceCandidateGenerator:
         
         if speed_before < self.min_speed_before_landing:
             return None
-            
-        # 改进 1: 空间高度约束 (Apex Protection)
-        # 如果 Y 坐标在画面上部 (前 30%)，这极有可能是高远球的最高点，而不是落地
-        # 落地应当发生在地面（通常在画面下方）
-        if y is not None:
-            if y[t] < img_height * 0.30:
-                return None
-
-        # 改进 2: 垂直方向约束
-        # 落地必须不处于上升状态。允许极小的负值容错，但不能明显向上。
-        if v_y is not None:
-            if v_y[t] < -2.0: 
-                return None
         
         speed_ratio = speed_current / (speed_before + 1e-6)
         
+        # 速度骤降判定
         if speed_ratio < self.speed_drop_ratio and speed_after <= self.max_speed_after_landing:
-            # 新增规则：Future Activity Check (检查是否有"复活")
-            # 真正的落地后，球应该保持静止。如果在未来几帧内速度又变大了，说明这帧只是暂时的减速（如网前晃动）
+            # Future Activity Check：防止网前假停
             check_end = min(n, t + self.future_check_window + 1)
             if check_end > t + 1:
-                future_max_speed = np.max(speed[t+1 : check_end] * visibility[t+1 : check_end])
-                # 如果未来几帧有任何一帧速度超过击球阈值或落地前速度的一半，则认为它复活了
-                resurrection_threshold = 10.0 # 像素/帧，约为慢速球的速度
+                future_speeds = speed[t+1:check_end] * visibility[t+1:check_end]
+                future_max_speed = np.max(future_speeds) if len(future_speeds) > 0 else 0
+                resurrection_threshold = 10.0  # 像素/帧
                 if future_max_speed > resurrection_threshold:
                     return None
 
@@ -535,32 +512,48 @@ class BounceCandidateGenerator:
     def _check_trajectory_end(self, x: np.ndarray, y: np.ndarray,
                               visibility: np.ndarray, speed: np.ndarray,
                               candidates: List[Dict]) -> None:
-        """检查轨迹末尾（回合结束时的落地）"""
+        """检查轨迹末尾（回合结束时的落地）- 核心改进版"""
         last_visible_idx = self._find_last_visible(visibility)
         
         if last_visible_idx is None or last_visible_idx <= self.min_visible_before:
             return
         
-        # 检查是否已有候选
-        if any(c['frame'] == last_visible_idx for c in candidates):
-            return
+        # 检查是否已有高置信度候选（避免重复标记）
+        for c in candidates:
+            if abs(c['frame'] - last_visible_idx) <= 3 and c.get('confidence', 0) > 0.65:
+                return
         
-        recent_speed = np.mean(speed[max(0, last_visible_idx-3):last_visible_idx+1])
-        if recent_speed >= self.min_speed_before_landing * 0.5:
-            candidates.append({
-                'frame': last_visible_idx,
-                'x': float(x[last_visible_idx]),
-                'y': float(y[last_visible_idx]),
-                'event_type': 'landing',
-                'rule': 'trajectory_end',
-                'confidence': 0.70,
-                'all_rules': ['trajectory_end'],
-                'auxiliary_rules': [],
-                'features': {
-                    'speed': float(speed[last_visible_idx]),
-                    'recent_avg_speed': float(recent_speed)
-                }
-            })
+        # 计算最后几帧的平均速度
+        recent_window = slice(max(0, last_visible_idx-3), last_visible_idx+1)
+        recent_speeds = speed[recent_window]
+        recent_avg_speed = float(np.mean(recent_speeds))
+        
+        # 分档判定
+        if recent_avg_speed < 2.0:
+            confidence = 0.88
+            landing_type = 'static_landing'
+        elif recent_avg_speed < 4.0:
+            confidence = 0.75
+            landing_type = 'slow_landing'
+        else:
+            confidence = 0.65
+            landing_type = 'flying_drop'
+        
+        candidates.append({
+            'frame': last_visible_idx,
+            'x': float(x[last_visible_idx]),
+            'y': float(y[last_visible_idx]),
+            'event_type': 'landing',
+            'rule': 'trajectory_end',
+            'confidence': confidence,
+            'all_rules': ['trajectory_end'],
+            'auxiliary_rules': [],
+            'features': {
+                'speed': float(speed[last_visible_idx]),
+                'recent_avg_speed': recent_avg_speed,
+                'landing_type': landing_type
+            }
+        })
     
     def _find_last_visible(self, visibility: np.ndarray) -> Optional[int]:
         """找到最后一个可见帧的索引"""
@@ -577,26 +570,19 @@ class BounceCandidateGenerator:
         if len(candidates) <= 1:
             return candidates
         
-        # 规则优先级 (数值越大优先级越高)
-        # 优先级设计原则：
-        # - 速度反转规则最可靠（击球必然导致方向改变）
-        # - 加速度峰值次之（击球瞬间有明显加速度变化）
-        # - 可见性变化中等（可能是落地或出界）
-        # - 局部极值规则最低（可能是正常轨迹的一部分）
         rule_priority = {
-            'vy_reversal': 7,           # Y速度反转 - 最可靠的击球检测
-            'vx_reversal': 6,           # X速度反转
-            'acceleration_peak': 5,     # 加速度峰值
-            'visibility_drop': 4,       # 可见性消失 - 落地
-            'speed_drop': 4,            # 速度骤降 - 落地
-            'visibility_drop_edge': 3,  # 边缘消失 - 出界
-            'trajectory_end': 3,        # 轨迹结束 - 落地
-            'y_local_max': 2,           # Y坐标局部极大值
-            'speed_local_max': 2,       # 速度局部极大值
-            'direction_change': 0       # 方向变化（保留扩展用）
+            'vy_reversal': 7,
+            'vx_reversal': 6,
+            'acceleration_peak': 5,
+            'visibility_drop': 4,
+            'speed_drop': 4,
+            'visibility_drop_edge': 3,
+            'trajectory_end': 3,
+            'y_local_max': 2,
+            'speed_local_max': 2,
+            'direction_change': 0
         }
         
-        # 按帧排序
         candidates.sort(key=lambda c: c['frame'])
         
         merged = []
@@ -606,19 +592,15 @@ class BounceCandidateGenerator:
             base_frame = candidates[i]['frame']
             j = i + 1
             
-            # 收集在 merge_window 内的所有候选（使用滑动窗口）
             while j < len(candidates) and candidates[j]['frame'] - base_frame <= self.merge_window:
                 group.append(candidates[j])
                 j += 1
             
-            # 选择最佳候选（优先级 > 置信度）
             best = max(group, key=lambda c: (
                 rule_priority.get(c['rule'], 0),
                 c['confidence']
             ))
             merged.append(best)
-            
-            # 跳过所有已合并的候选
             i = j
         
         return merged
