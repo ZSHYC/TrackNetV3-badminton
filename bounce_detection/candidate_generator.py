@@ -34,6 +34,13 @@ class BounceCandidateGenerator:
                  speed_drop_ratio: float = 0.3,          # 速度下降到原来的比例以下视为急剧下降
                  min_speed_before_landing: float = 8.0,  # 落地前最小速度（过滤静止球）
                  max_speed_after_landing: float = 5.0,   # 落地后最大速度（接近静止）
+                 # 速度阶跃/低速段参数（高召回）
+                 high_speed_threshold: float = 8.0,      # 高速阈值 V_high
+                 low_speed_threshold: float = 2.5,       # 低速阈值 V_low
+                 low_speed_ratio: float = 0.7,           # 低速占比阈值
+                 pre_window: int = 2,                    # 前向观察窗口
+                 post_window: int = 4,                   # 后向观察窗口
+                 hold_window: int = 3,                   # 低速持续窗口
                  # 击球点检测参数
                  min_speed_at_hit: float = 3.0,          # 击球时最小速度
                  vy_reversal_threshold: float = 1.0,     # v_y 反转阈值
@@ -52,6 +59,12 @@ class BounceCandidateGenerator:
             speed_drop_ratio: 速度下降比例阈值
             min_speed_before_landing: 落地前最小速度，过滤本来就静止的球
             max_speed_after_landing: 落地后最大速度，确认球确实停下来了
+            high_speed_threshold: 高速阈值（速度阶跃规则）
+            low_speed_threshold: 低速阈值（低速段起点规则）
+            low_speed_ratio: 低速占比阈值（后向窗口内低速比例）
+            pre_window: 前向观察窗口大小
+            post_window: 后向观察窗口大小
+            hold_window: 低速持续窗口大小
             min_speed_at_hit: 击球时最小速度
             vy_reversal_threshold: y方向速度反转阈值
             acc_threshold: 加速度阈值（像素/帧²）
@@ -66,6 +79,12 @@ class BounceCandidateGenerator:
         self.speed_drop_ratio = speed_drop_ratio
         self.min_speed_before_landing = min_speed_before_landing
         self.max_speed_after_landing = max_speed_after_landing
+        self.high_speed_threshold = high_speed_threshold
+        self.low_speed_threshold = low_speed_threshold
+        self.low_speed_ratio = low_speed_ratio
+        self.pre_window = pre_window
+        self.post_window = post_window
+        self.hold_window = hold_window
         self.min_speed_at_hit = min_speed_at_hit
         self.vy_reversal_threshold = vy_reversal_threshold
         self.acc_threshold = acc_threshold
@@ -191,18 +210,40 @@ class BounceCandidateGenerator:
             
             # ---------- 落地类主规则 ----------
             
-            # 主规则4: 速度急剧下降（最强落点规则）
+            # 主规则4: 速度阶跃（高速->低速的第一帧，最接近触地瞬间）
+            if primary_candidate is None:
+                result = self._check_speed_step(t, n, visibility, speed)
+                if result:
+                    primary_candidate = {
+                        'event_type': 'landing',
+                        'rule': 'speed_step',
+                        'confidence': 0.90  # 高速到低速阶跃，最强证据
+                    }
+                    primary_features = result
+
+            # 主规则5: 低速段起点（进入持续低速区间的第一帧）
+            if primary_candidate is None:
+                result = self._check_low_speed_start(t, n, visibility, speed)
+                if result:
+                    primary_candidate = {
+                        'event_type': 'landing',
+                        'rule': 'low_speed_start',
+                        'confidence': 0.85
+                    }
+                    primary_features = result
+
+            # 主规则6: 速度急剧下降（保留作为补充）
             if primary_candidate is None:
                 result = self._check_speed_drop(t, n, visibility, speed)
                 if result:
                     primary_candidate = {
                         'event_type': 'landing',
                         'rule': 'speed_drop',
-                        'confidence': 0.85  # 提高置信度，这是最可靠的落点证据
+                        'confidence': 0.80
                     }
                     primary_features = result
             
-            # 主规则5: 可见→不可见（降级为弱规则，仅作异常标记）
+            # 主规则7: 可见→不可见（降级为弱规则，仅作异常标记）
             if primary_candidate is None:
                 result = self._check_visibility_drop(t, n, x, y, visibility, speed, v_y, 
                                                      img_height, img_width, visible_count)
@@ -430,6 +471,72 @@ class BounceCandidateGenerator:
             'confidence': 0.55,  # 大幅降低置信度
             'features': features
         }
+
+    def _check_speed_step(self, t: int, n: int, visibility: np.ndarray,
+                          speed: np.ndarray) -> Optional[Dict]:
+        """主规则: 速度阶跃（高速->低速的第一帧）"""
+        if t <= 0 or t >= n:
+            return None
+        if visibility[t] != 1 or visibility[t-1] != 1:
+            return None
+
+        v_prev = speed[t-1]
+        v_curr = speed[t]
+        if v_curr > self.low_speed_threshold:
+            return None
+
+        ratio = v_curr / (v_prev + 1e-6)
+        if not (v_prev >= self.high_speed_threshold or ratio < self.speed_drop_ratio):
+            return None
+
+        # 后向低速占比检查
+        post_end = min(n, t + self.post_window + 1)
+        post_speeds = speed[t:post_end]
+        post_vis = visibility[t:post_end]
+        if len(post_speeds) == 0:
+            return None
+        low_mask = (post_speeds <= self.low_speed_threshold) & (post_vis == 1)
+        low_ratio = float(np.sum(low_mask)) / max(1, int(np.sum(post_vis)))
+        if low_ratio < self.low_speed_ratio:
+            return None
+
+        return {
+            'v_prev': float(v_prev),
+            'v_curr': float(v_curr),
+            'ratio': float(ratio),
+            'low_ratio': float(low_ratio)
+        }
+
+    def _check_low_speed_start(self, t: int, n: int, visibility: np.ndarray,
+                               speed: np.ndarray) -> Optional[Dict]:
+        """主规则: 低速段起点（进入持续低速区间的第一帧）"""
+        if t <= 0 or t >= n:
+            return None
+        if visibility[t] != 1:
+            return None
+
+        v_curr = speed[t]
+        v_prev = speed[t-1] if visibility[t-1] == 1 else v_curr + 1e-6
+        if v_curr > self.low_speed_threshold:
+            return None
+        if v_prev <= self.low_speed_threshold:
+            return None
+
+        hold_end = min(n, t + self.hold_window)
+        hold_speeds = speed[t:hold_end]
+        hold_vis = visibility[t:hold_end]
+        if len(hold_speeds) == 0:
+            return None
+        low_mask = (hold_speeds <= self.low_speed_threshold) & (hold_vis == 1)
+        low_ratio = float(np.sum(low_mask)) / max(1, int(np.sum(hold_vis)))
+        if low_ratio < self.low_speed_ratio:
+            return None
+
+        return {
+            'v_prev': float(v_prev),
+            'v_curr': float(v_curr),
+            'low_ratio': float(low_ratio)
+        }
     
     def _check_speed_drop(self, t: int, n: int, visibility: np.ndarray,
                           speed: np.ndarray) -> Optional[Dict]:
@@ -523,21 +630,30 @@ class BounceCandidateGenerator:
             if abs(c['frame'] - last_visible_idx) <= 3 and c.get('confidence', 0) > 0.65:
                 return
         
-        # 计算最后几帧的平均速度
+        # 优先回溯低速尾段起点，定位“初始落点”
+        tail_start = self._find_tail_low_speed_start(speed, visibility, last_visible_idx)
+        if tail_start is not None:
+            candidates.append({
+                'frame': tail_start,
+                'x': float(x[tail_start]),
+                'y': float(y[tail_start]),
+                'event_type': 'landing',
+                'rule': 'trajectory_end',
+                'confidence': 0.88,
+                'all_rules': ['trajectory_end'],
+                'auxiliary_rules': [],
+                'features': {
+                    'speed': float(speed[tail_start]),
+                    'recent_avg_speed': float(np.mean(speed[max(0, tail_start-3):tail_start+1])),
+                    'landing_type': 'tail_low_speed_start'
+                }
+            })
+            return
+
+        # 无法回溯时，保留末帧作为弱兜底
         recent_window = slice(max(0, last_visible_idx-3), last_visible_idx+1)
         recent_speeds = speed[recent_window]
         recent_avg_speed = float(np.mean(recent_speeds))
-        
-        # 分档判定
-        if recent_avg_speed < 2.0:
-            confidence = 0.88
-            landing_type = 'static_landing'
-        elif recent_avg_speed < 4.0:
-            confidence = 0.75
-            landing_type = 'slow_landing'
-        else:
-            confidence = 0.65
-            landing_type = 'flying_drop'
         
         candidates.append({
             'frame': last_visible_idx,
@@ -545,13 +661,13 @@ class BounceCandidateGenerator:
             'y': float(y[last_visible_idx]),
             'event_type': 'landing',
             'rule': 'trajectory_end',
-            'confidence': confidence,
+            'confidence': 0.65,
             'all_rules': ['trajectory_end'],
             'auxiliary_rules': [],
             'features': {
                 'speed': float(speed[last_visible_idx]),
                 'recent_avg_speed': recent_avg_speed,
-                'landing_type': landing_type
+                'landing_type': 'tail_fallback'
             }
         })
     
@@ -561,6 +677,38 @@ class BounceCandidateGenerator:
         if len(visible_indices) == 0:
             return None
         return int(visible_indices[-1])
+
+    def _find_tail_low_speed_start(self, speed: np.ndarray,
+                                   visibility: np.ndarray,
+                                   last_visible_idx: int) -> Optional[int]:
+        """回溯尾段低速区间起点（用于初始落点定位）"""
+        if last_visible_idx <= 0:
+            return None
+
+        # 从最后可见帧向前回溯低速段
+        idx = last_visible_idx
+        while idx >= 0:
+            if visibility[idx] != 1:
+                idx -= 1
+                continue
+            if speed[idx] <= self.low_speed_threshold:
+                idx -= 1
+                continue
+            break
+
+        tail_start = idx + 1
+        if tail_start > last_visible_idx:
+            return None
+
+        # 检查低速段长度是否足够
+        low_len = 0
+        for i in range(tail_start, last_visible_idx + 1):
+            if visibility[i] == 1 and speed[i] <= self.low_speed_threshold:
+                low_len += 1
+        if low_len < self.hold_window:
+            return None
+
+        return tail_start
     
     def _merge_nearby_candidates(self, candidates: List[Dict]) -> List[Dict]:
         """
@@ -574,8 +722,10 @@ class BounceCandidateGenerator:
             'vy_reversal': 7,
             'vx_reversal': 6,
             'acceleration_peak': 5,
-            'visibility_drop': 4,
+            'speed_step': 5,
+            'low_speed_start': 5,
             'speed_drop': 4,
+            'visibility_drop': 3,
             'visibility_drop_edge': 3,
             'trajectory_end': 3,
             'y_local_max': 2,
