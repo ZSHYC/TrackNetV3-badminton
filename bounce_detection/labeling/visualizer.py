@@ -500,7 +500,7 @@ class InfoPanel:
         """Create text progress bar"""
         filled = int(width * percent / 100)
         empty = width - filled
-        return '#' * filled + '-' * empty
+        return '█' * filled + '░' * empty
 
 
 class EventListPanel:
@@ -557,8 +557,8 @@ class EventListPanel:
                 
                 # Current event highlight
                 if i == current_event_idx:
-                    prefix = ">"
-                    suffix = "<"
+                    prefix = "▶"
+                    suffix = "◀"
                 else:
                     prefix = " "
                     suffix = " "
@@ -575,7 +575,7 @@ class EventListPanel:
                 frame = event.get('frame', 0)
                 
                 # Format line
-                line = f"{prefix}[{confirmed}] F{frame:04d} {symbol}{type_abbr}{suffix}"
+                line = f"{prefix}[{confirmed}] F{frame:04d} {symbol}{type_abbr} {suffix}"
                 lines.append(line)
             
             if end_idx < len(events):
@@ -669,7 +669,7 @@ class ShortcutPanel:
             else:
                 # Highlight current key
                 if highlight_key and key.lower().startswith(highlight_key.lower()):
-                    lines.append(f"> {key:<6} {desc}")
+                    lines.append(f"▶ {key:<6} {desc}")
                 else:
                     lines.append(f"  {key:<6} {desc}")
         

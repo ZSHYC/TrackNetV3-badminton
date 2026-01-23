@@ -127,6 +127,9 @@ class LabelingTool:
         # 创建图形
         self.fig = plt.figure(figsize=(22, 13), facecolor=THEME['bg_dark'])
         self.fig.canvas.manager.set_window_title('🏸 羽毛球落点检测标注工具')
+        self.fig.suptitle('🏸 Bounce Labeling Studio',
+                  fontsize=16, fontweight='bold',
+                  color=THEME['text_primary'], y=0.985)
         
         # 优化布局: 3行布局
         # Row 0: [视频帧 (大)] [信息面板] [事件列表] [快捷键]
@@ -223,11 +226,15 @@ class LabelingTool:
                 h * ax.get_position().height * 0.9
             ])
             btn_ax.set_facecolor(color)
+            for spine in btn_ax.spines.values():
+                spine.set_edgecolor('#000000')
+                spine.set_linewidth(0.8)
             
             btn = Button(btn_ax, label, color=color, hovercolor=self._lighten_color(color))
             btn.label.set_fontsize(9)
             btn.label.set_fontweight('bold')
             btn.label.set_color('white')
+            btn.label.set_fontfamily('DejaVu Sans')
             btn.on_clicked(callback)
             self.buttons.append(btn)
     
